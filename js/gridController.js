@@ -232,16 +232,16 @@ class GridController {
                 
                 // Formatear valores especiales
                 if (col.key === 'precio') {
-                    displayVal = val !== null && val !== undefined ? `$${Number(val).toFixed(4)}` : '';
+                    displayVal = val !== null && val !== undefined ? `$${Number(val).toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}` : '';
                     cellClass = 'numeric-cell';
                 } else if (col.key === 'totalUs') {
-                    displayVal = val !== null && val !== undefined ? `$${Number(val).toFixed(2)}` : '';
+                    displayVal = val !== null && val !== undefined ? `$${Number(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '';
                     cellClass = 'numeric-cell formula-cell';
                 } else if (col.key === 'cantidad') {
-                    displayVal = val !== null && val !== undefined ? Number(val).toLocaleString() : '';
+                    displayVal = val !== null && val !== undefined ? Number(val).toLocaleString('en-US') : '';
                     cellClass = 'numeric-cell';
                 } else if (col.key === 'year4') {
-                    displayVal = val !== null && val !== undefined ? `${(Number(val) * 100).toFixed(2)}%` : '';
+                    displayVal = val !== null && val !== undefined ? `${(Number(val) * 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%` : '';
                     cellClass = 'numeric-cell';
                 } else if (col.locked) {
                     cellClass = 'formula-cell';
@@ -466,13 +466,13 @@ class GridController {
                         let displayVal = rowData[col.key];
                         
                         if (col.key === 'precio') {
-                            displayVal = displayVal !== null ? `$${Number(displayVal).toFixed(4)}` : '';
+                            displayVal = displayVal !== null ? `$${Number(displayVal).toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}` : '';
                         } else if (col.key === 'totalUs') {
-                            displayVal = displayVal !== null ? `$${Number(displayVal).toFixed(2)}` : '';
+                            displayVal = displayVal !== null ? `$${Number(displayVal).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '';
                         } else if (col.key === 'cantidad') {
-                            displayVal = displayVal !== null ? Number(displayVal).toLocaleString() : '';
+                            displayVal = displayVal !== null ? Number(displayVal).toLocaleString('en-US') : '';
                         } else if (col.key === 'year4') {
-                            displayVal = displayVal !== null ? `${(Number(displayVal) * 100).toFixed(2)}%` : '';
+                            displayVal = displayVal !== null ? `${(Number(displayVal) * 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%` : '';
                         }
 
                         cellValSpan.textContent = displayVal !== null && displayVal !== undefined ? displayVal : '';
@@ -547,9 +547,9 @@ class GridController {
         const ordersCardVal = this.kpisContainer.querySelector('#kpi-orders');
         const marginCardVal = this.kpisContainer.querySelector('#kpi-margin');
 
-        if (qtyCardVal) qtyCardVal.textContent = totalQty.toLocaleString();
-        if (revCardVal) revCardVal.textContent = `$${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-        if (ordersCardVal) ordersCardVal.textContent = totalOrders.toLocaleString();
+        if (qtyCardVal) qtyCardVal.textContent = totalQty.toLocaleString('en-US');
+        if (revCardVal) revCardVal.textContent = `$${totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        if (ordersCardVal) ordersCardVal.textContent = totalOrders.toLocaleString('en-US');
         if (marginCardVal) marginCardVal.textContent = `${avgMargin.toFixed(2)}%`;
     }
 
@@ -631,7 +631,7 @@ class GridController {
                     const cleanFormula = compiledFormula.startsWith('=+') ? compiledFormula.substring(2) : compiledFormula.substring(1);
                     
                     let cellVal = row[col.key];
-                    let cellType = 's'; // Default string
+                    let cellType = 'str'; // Use 'str' (formula string result) instead of 's' (shared string) for string formula values to prevent Excel XML validation errors
                     
                     if (typeof cellVal === 'number') {
                         cellType = 'n';
@@ -639,14 +639,29 @@ class GridController {
                         cellType = 'd';
                     }
                     
-                    r_cols.push({
-                        t: cellType,
-                        v: cellVal,
-                        f: cleanFormula
-                    });
+                    if (cellVal === null || cellVal === undefined) {
+                        cellVal = '';
+                    }
+                    
+                    // Formatear Total US$ con máscara de moneda en la exportación
+                    if (col.formulaKey === 'TotalUS') {
+                        r_cols.push({
+                            t: 'n',
+                            v: cellVal || 0,
+                            f: cleanFormula,
+                            z: '$#,##0.00'
+                        });
+                    } else {
+                        r_cols.push({
+                            t: cellType,
+                            v: cellVal,
+                            f: cleanFormula
+                        });
+                    }
                 } else {
                     // Valor directo (DATA 1, DATA 2, CANTIDAD, PRECIO, etc.)
                     let cellVal = row[col.key];
+                    
                     if (col.key === 'fechaDespacho' && cellVal) {
                         const serial = dateToExcelSerial(cellVal);
                         if (serial !== null) {
@@ -658,6 +673,34 @@ class GridController {
                             return;
                         }
                     }
+                    
+                    if (col.key === 'cantidad') {
+                        r_cols.push({
+                            t: 'n',
+                            v: cellVal || 0,
+                            z: '#,##0'
+                        });
+                        return;
+                    }
+                    
+                    if (col.key === 'precio') {
+                        r_cols.push({
+                            t: 'n',
+                            v: cellVal || 0,
+                            z: '$#,##0.0000'
+                        });
+                        return;
+                    }
+                    
+                    if (col.key === 'year4') {
+                        r_cols.push({
+                            t: 'n',
+                            v: cellVal || 0,
+                            z: '0.00%'
+                        });
+                        return;
+                    }
+                    
                     r_cols.push(cellVal);
                 }
             });
@@ -676,6 +719,143 @@ class GridController {
         ws['!cols'] = wscols;
 
         XLSX.utils.book_append_sheet(wb, ws, "Facturacion Template");
+        
+        // ----------------------------------------------------
+        // 2b. Construir la hoja "Plantilla Luis"
+        // ----------------------------------------------------
+        const luisHeaders = [
+            "Cliente", "Vendor", "Temporada", "Reserva o Programa", "OP", "Estilo", 
+            "Bordado", "Estampado", "Garment Dye", "Tela", "Cantidad", "Precio FOB $", 
+            "Total US$", "Fecha de Despacho", "Status", "Semana", "Mes", "Año", 
+            "% Margen", "Total US$ Margen"
+        ];
+        
+        const luisData = [luisHeaders];
+        
+        this.data.forEach((row, idx) => {
+            const excelRow = idx + 2; // Fila 2 de Excel
+            const r_cols = [];
+            
+            // 1. Cliente (Col A)
+            r_cols.push(row.cliente || '');
+            
+            // 2. Vendor (Col B)
+            r_cols.push(row.vendorCalc || '');
+            
+            // 3. Temporada (Col C)
+            r_cols.push(row.season || '');
+            
+            // 4. Reserva o Programa (Col D)
+            r_cols.push(row.programa || '');
+            
+            // 5. OP (Col E)
+            r_cols.push(row.op ? Number(row.op) : 0);
+            
+            // 6. Estilo (Col F)
+            r_cols.push(row.estilo || '');
+            
+            // 7. Bordado (Col G)
+            r_cols.push(row.bordado || '');
+            
+            // 8. Estampado (Col H)
+            r_cols.push(row.estampado || '');
+            
+            // 9. Garment Dye (Col I)
+            r_cols.push(row.garmentDye || '');
+            
+            // 10. Tela (Col J)
+            r_cols.push(row.tela || '');
+            
+            // 11. Cantidad (Col K)
+            r_cols.push({
+                t: 'n',
+                v: row.cantidad || 0,
+                z: '#,##0'
+            });
+            
+            // 12. Precio FOB $ (Col L)
+            r_cols.push({
+                t: 'n',
+                v: row.precio || 0,
+                z: '$#,##0.0000'
+            });
+            
+            // 13. Total US$ (Col M) -> Fórmula K*L
+            r_cols.push({
+                t: 'n',
+                v: row.totalUs || 0,
+                f: `K${excelRow}*L${excelRow}`,
+                z: '$#,##0.00'
+            });
+            
+            // 14. Fecha de Despacho (Col N)
+            let dateSerial = null;
+            if (row.fechaDespacho) {
+                dateSerial = dateToExcelSerial(row.fechaDespacho);
+            }
+            if (dateSerial !== null) {
+                r_cols.push({
+                    t: 'n',
+                    v: dateSerial,
+                    z: 'd-mmm-yy'
+                });
+            } else {
+                r_cols.push('');
+            }
+            
+            // 15. Status (Col O)
+            r_cols.push(row.status || '');
+            
+            // 16. Semana (Col P) -> Fórmula WEEKNUM(N)
+            r_cols.push({
+                t: 'n',
+                v: row.wk || 0,
+                f: `WEEKNUM(N${excelRow})`
+            });
+            
+            // 17. Mes (Col Q) -> Fórmula TEXT(N, "MMMM")
+            r_cols.push({
+                t: 'str',
+                v: row.month || '',
+                f: `TEXT(N${excelRow},"MMMM")`
+            });
+            
+            // 18. Año (Col R) -> Fórmula TEXT(N, "YYY")
+            r_cols.push({
+                t: 'str',
+                v: row.year3 || '',
+                f: `TEXT(N${excelRow},"YYY")`
+            });
+            
+            // 19. % Margen (Col S)
+            r_cols.push({
+                t: 'n',
+                v: row.year4 || 0,
+                z: '0.00%'
+            });
+            
+            // 20. Total US$ Margen (Col T) -> Fórmula M*S
+            const marginValue = (row.totalUs || 0) * (row.year4 || 0);
+            r_cols.push({
+                t: 'n',
+                v: marginValue,
+                f: `M${excelRow}*S${excelRow}`,
+                z: '$#,##0.00'
+            });
+            
+            luisData.push(r_cols);
+        });
+        
+        const ws2 = XLSX.utils.aoa_to_sheet(luisData);
+        
+        // Ajustar anchos de columna para "Plantilla Luis"
+        const ws2cols = luisHeaders.map(() => ({ wch: 18 }));
+        ws2cols[0] = { wch: 22 }; // Cliente
+        ws2cols[5] = { wch: 25 }; // Estilo
+        ws2cols[9] = { wch: 30 }; // Tela
+        ws2['!cols'] = ws2cols;
+        
+        XLSX.utils.book_append_sheet(wb, ws2, "Plantilla Luis");
         
         // 3. Escribir y descargar el archivo
         XLSX.writeFile(wb, "Facturacion_Exportada.xlsx");
