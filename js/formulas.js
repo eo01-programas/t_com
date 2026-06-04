@@ -40,7 +40,7 @@ const FormulaDefinitions = {
         }
     },
     TotalUS: {
-        formula: '=CANTIDAD*PRECIO_$',
+        formula: '=N{row}*O{row}',
         criteria: 'Multiplica la cantidad de prendas (CANTIDAD) por el precio unitario pactado (PRECIO $).',
         calculate: (row) => {
             const qty = parseFloat(row.cantidad) || 0;
