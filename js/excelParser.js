@@ -163,8 +163,8 @@ const ExcelParser = {
                     const statusSeasonVal = getVal(colMapping.statusSeason);
                     const normalizedStatusSeason = ExcelParser.normalizeText(statusSeasonVal);
                     
-                    // Consideramos válido "producción", "produccion", "producción "
-                    if (!normalizedStatusSeason.startsWith('produccion')) {
+                    // Consideramos válido únicamente "producción"
+                    if (normalizedStatusSeason !== 'produccion') {
                         continue; // Saltar fila
                     }
                     
