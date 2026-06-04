@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Facturación LLL - Gestor de Plantilla</title>
+    <!-- Cargar CSS principal -->
+    <link rel="stylesheet" href="css/styles.css?v=1.1.2">
+    <!-- Cargar librería SheetJS (XLSX) para parsear y exportar archivos Excel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- CABECERA PRINCIPAL -->
+        <header class="header-main">
+            <div class="header-title-group">
+                <h1>Facturación Lululemon</h1>
+                <p>Generación de cuadrícula de facturación a partir del reporte global LLL</p>
+            </div>
+            <div class="header-actions">
+                <!-- Espacio para botones globales si fuesen necesarios -->
+            </div>
+        </header>
+
+        <!-- PANTALLA DE CARGA (OVERLAY) -->
+        <div id="loading-overlay" class="loading-overlay">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Procesando archivo...</div>
+        </div>
+
+        <!-- 1. VISTA DE IMPORTACIÓN (SECCIÓN DE CARGA) -->
+        <section id="import-view" class="import-view">
+            <div class="import-card">
+                <div class="upload-area" id="drag-drop-area">
+                    <span class="upload-icon">📊</span>
+                    <h3>Importa tu reporte global</h3>
+                    <p>Arrastra y suelta tu archivo <strong>LLL Global Report.xlsx</strong> aquí, o haz click para explorar tus archivos locales.</p>
+                    <label for="excel-file-input" class="btn-primary">
+                        <span>Seleccionar Archivo</span>
+                    </label>
+                    <input type="file" id="excel-file-input" class="file-input-hidden" accept=".xlsx, .xls">
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. VISTA DE DATOS (SECCIÓN DE CUADRÍCULA Y KPIS) -->
+        <section id="data-view" class="data-view hidden">
+            <!-- Panel superior de KPIs -->
+            <div class="kpis-grid" id="kpi-cards-container">
+                <!-- KPI 1: Cantidad Total -->
+                <div class="kpi-card">
+                    <div class="kpi-icon-wrapper">📦</div>
+                    <div class="kpi-info">
+                        <h4>Cantidad Total</h4>
+                        <div class="kpi-value" id="kpi-qty">0</div>
+                    </div>
+                </div>
+                <!-- KPI 2: Total Facturado -->
+                <div class="kpi-card">
+                    <div class="kpi-icon-wrapper">💵</div>
+                    <div class="kpi-info">
+                        <h4>Total Facturado</h4>
+                        <div class="kpi-value" id="kpi-revenue">$0.00</div>
+                    </div>
+                </div>
+                <!-- KPI 3: Registros Únicos -->
+                <div class="kpi-card">
+                    <div class="kpi-icon-wrapper">📝</div>
+                    <div class="kpi-info">
+                        <h4>Filas Agrupadas</h4>
+                        <div class="kpi-value" id="kpi-orders">0</div>
+                    </div>
+                </div>
+                <!-- KPI 4: Margen Promedio -->
+                <div class="kpi-card">
+                    <div class="kpi-icon-wrapper">📈</div>
+                    <div class="kpi-info">
+                        <h4>Margen Promedio</h4>
+                        <div class="kpi-value" id="kpi-margin">0.00%</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Barra de Filtros y Búsqueda -->
+            <div class="filters-bar">
+                <div class="filters-left-group">
+                    <!-- Búsqueda global -->
+                    <div class="search-input-wrapper">
+                        <span class="search-icon">🔍</span>
+                        <input type="text" id="global-search" placeholder="Buscar OP, Estilo, Vendedor, Tela...">
+                    </div>
+                    
+                    <!-- Filtro Vendedor -->
+                    <select id="filter-vendor" class="filter-select">
+                        <option value="">Todos los Vendedores</option>
+                    </select>
+
+                    <!-- Filtro Temporada -->
+                    <select id="filter-season" class="filter-select">
+                        <option value="">Todas las Temporadas</option>
+                    </select>
+
+                    <!-- Filtro Estado Factura -->
+                    <select id="filter-status" class="filter-select">
+                        <option value="">Todos los Estados</option>
+                    </select>
+
+                    <!-- Botón limpiar filtros -->
+                    <button id="btn-reset-filters" class="btn-secondary" title="Restablecer todos los filtros">
+                        <span>Limpiar Filtros</span>
+                    </button>
+                </div>
+
+                <div class="filters-right-group">
+                    <div style="display: flex; gap: 0.75rem;">
+                        <button id="btn-new-import" class="btn-secondary">
+                            <span>📂 Importar Nuevo</span>
+                        </button>
+                        <button id="btn-export" class="btn-primary">
+                            <span>📥 Exportar a Excel</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Panel de la Cuadrícula -->
+            <div class="table-panel-card">
+                <div id="grid-container">
+                    <!-- La tabla se renderizará dinámicamente aquí mediante gridController.js -->
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- CARGAR LÓGICA DE APLICACIÓN -->
+    <script src="js/formulas.js?v=1.1.2"></script>
+    <script src="js/excelParser.js?v=1.1.2"></script>
+    <script src="js/gridController.js?v=1.1.2"></script>
+    <script src="js/app.js?v=1.1.2"></script>
+</body>
+</html>
