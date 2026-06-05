@@ -20,10 +20,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const searchInput = document.getElementById('global-search');
     const btnResetFilters = document.getElementById('btn-reset-filters');
     const btnExportExcel = document.getElementById('btn-export');
-    const btnNewImport = document.getElementById('btn-new-import');
+    const btnReimport = document.getElementById('btn-reimport');
     const btnBackMenu = document.getElementById('btn-back-menu');
     const selectStatusHod = document.getElementById('filter-status-hod');
     const statusHodHelp = document.getElementById('status-hod-help');
+    const filterDistSeason = document.getElementById('filter-dist-season');
+    const distCheckLll = document.getElementById('dist-check-lll');
+    const distCheckExpo = document.getElementById('dist-check-expo');
+    const distCheckPcp = document.getElementById('dist-check-pcp');
     let exportInProgress = false;
 
     const headerBackMenu = document.createElement('button');
@@ -140,6 +144,25 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     /**
+     * Carga los valores únicos de STATUS Season para el filtro de Distribución.
+     */
+    const populateDistributionStatusFilter = () => {
+        if (!filterDistSeason) return;
+
+        const options = typeof grid.getDistributionStatusSeasonOptions === 'function'
+            ? grid.getDistributionStatusSeasonOptions()
+            : [];
+
+        filterDistSeason.innerHTML = options
+            .map(opt => `<option value="${opt.value}">${opt.label}</option>`)
+            .join('');
+
+        Array.from(filterDistSeason.options).forEach(opt => {
+            opt.selected = opt.value === 'produccion';
+        });
+    };
+
+    /**
      * Sincroniza la visibilidad de la UI principal según el módulo activo.
      * Distribución y Status dejan visible solo el botón de exportación en el bloque principal.
      */
@@ -148,8 +171,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const isStatusModule = grid.activeModule === 'status';
 
         dataView.classList.toggle('distribution-mode', isCompactModule);
+        dataView.classList.toggle('status-mode', isStatusModule);
         btnBackMenu.classList.toggle('hidden', isCompactModule);
-        btnNewImport.classList.toggle('hidden', isCompactModule);
         headerBackMenu.classList.toggle('hidden', !isCompactModule);
         if (selectStatusHod) {
             selectStatusHod.classList.toggle('hidden', !isStatusModule);
@@ -173,7 +196,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnExportExcel.disabled = isBusy;
         btnExportExcel.setAttribute('aria-busy', isBusy ? 'true' : 'false');
         btnBackMenu.disabled = isBusy;
-        btnNewImport.disabled = isBusy;
+        if (btnReimport) btnReimport.disabled = isBusy;
         headerBackMenu.disabled = isBusy;
         if (selectStatusHod) {
             selectStatusHod.disabled = isBusy || selectStatusHod.options.length === 0;
@@ -212,6 +235,48 @@ document.addEventListener('DOMContentLoaded', () => {
             alert(`Error al exportar los archivos Excel:\n${err.message}`);
         } finally {
             setExportBusyState(false);
+        }
+    };
+
+    /**
+     * Abre un módulo mostrando primero una pantalla de carga visible.
+     */
+    const openModuleView = async (moduleName) => {
+        if (exportInProgress) return;
+
+        const moduleLabel = moduleName === 'distribucion'
+            ? 'Distribución'
+            : moduleName === 'status'
+                ? 'Status'
+                : 'Facturación';
+
+        try {
+            toggleLoading(true, `Cargando ${moduleLabel}...`);
+            await waitForPaint();
+
+            if (moduleName === 'status') {
+                populateStatusHodFilter();
+            }
+
+            if (moduleName === 'distribucion') {
+                populateDistributionStatusFilter();
+            }
+
+            grid.setActiveModule(moduleName);
+            updateExportButtonLabel();
+            syncModuleView();
+
+            menuView.classList.add('hidden');
+            dataView.classList.remove('hidden');
+
+            grid.applyFilters();
+        } catch (err) {
+            console.error(err);
+            alert(`No se pudo abrir el módulo ${moduleLabel}:\n${err.message}`);
+            menuView.classList.remove('hidden');
+            dataView.classList.add('hidden');
+        } finally {
+            toggleLoading(false);
         }
     };
 
@@ -255,6 +320,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Cambiar vistas a Menú Principal
                 importView.classList.add('hidden');
                 menuView.classList.remove('hidden');
+                if (btnReimport) btnReimport.classList.remove('hidden');
                 
             } catch (err) {
                 console.error(err);
@@ -361,8 +427,23 @@ document.addEventListener('DOMContentLoaded', () => {
         if (exportInProgress) return;
 
         if (grid.activeModule === 'distribucion') {
-            await runExportTask('Generando los 3 archivos de Distribución...', () => {
-                grid.exportDistributionExcels();
+            const selectedStatuses = filterDistSeason
+                ? Array.from(filterDistSeason.selectedOptions).map(opt => opt.value).filter(Boolean)
+                : [];
+            const selectedModules = [
+                distCheckLll && distCheckLll.checked ? 'LLL' : null,
+                distCheckExpo && distCheckExpo.checked ? 'EXPO' : null,
+                distCheckPcp && distCheckPcp.checked ? 'PCP' : null
+            ].filter(Boolean);
+
+            if (selectedModules.length === 0) {
+                alert('Por favor selecciona al menos un archivo para generar.');
+                return;
+            }
+
+            const countLabel = selectedModules.length === 1 ? '1 archivo' : `${selectedModules.length} archivos`;
+            await runExportTask(`Generando ${countLabel} de Distribución...`, () => {
+                grid.exportDistributionExcels({ statusSeasons: selectedStatuses, modules: selectedModules });
             });
             return;
         }
@@ -400,31 +481,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Navegación desde el menú a la cuadrícula de Facturación
     menuOptFacturacion.addEventListener('click', () => {
-        grid.setActiveModule('facturacion');
-        updateExportButtonLabel();
-        syncModuleView();
-        menuView.classList.add('hidden');
-        dataView.classList.remove('hidden');
+        openModuleView('facturacion');
     });
 
     // Navegación desde el menú a la cuadrícula de Distribución
     menuOptDistribucion.addEventListener('click', () => {
-        grid.setActiveModule('distribucion');
-        updateExportButtonLabel();
-        syncModuleView();
-        menuView.classList.add('hidden');
-        dataView.classList.remove('hidden');
+        openModuleView('distribucion');
     });
 
     // Navegación desde el menú a la pantalla de Status
     menuOptStatus.addEventListener('click', () => {
-        populateStatusHodFilter();
-        grid.setActiveModule('status');
-        updateExportButtonLabel();
-        syncModuleView();
-        grid.applyFilters();
-        menuView.classList.add('hidden');
-        dataView.classList.remove('hidden');
+        openModuleView('status');
     });
 
     // Navegación de regreso desde la cuadrícula al menú de módulos
@@ -436,36 +503,37 @@ document.addEventListener('DOMContentLoaded', () => {
         showMenuView();
     });
 
-    btnNewImport.addEventListener('click', () => {
-        if (confirm('¿Estás seguro de que deseas importar otro archivo? Se perderán los cambios no exportados.')) {
-            // Limpiar inputs
-            clearTimeout(searchDebounceTimeout);
-            fileInput.value = '';
-            searchInput.value = '';
-            selectVendor.value = '';
-            selectSeason.value = '';
-            selectStatus.value = '';
-            clearStatusHodSelection();
-            
-            grid.data = [];
-            grid.filteredData = [];
-            grid.searchTerm = '';
-            grid.filters = { data1: '', season: '', status: '', hodDates: [] };
-            grid.setSourceArrayBuffer(null);
-            if (selectStatusHod) {
-                selectStatusHod.innerHTML = '';
-                selectStatusHod.disabled = true;
+    if (btnReimport) {
+        btnReimport.addEventListener('click', () => {
+            if (confirm('¿Deseas subir un nuevo archivo global? Se perderán los cambios no exportados.')) {
+                clearTimeout(searchDebounceTimeout);
+                fileInput.value = '';
+                searchInput.value = '';
+                selectVendor.value = '';
+                selectSeason.value = '';
+                selectStatus.value = '';
+                clearStatusHodSelection();
+
+                grid.data = [];
+                grid.filteredData = [];
+                grid.searchTerm = '';
+                grid.filters = { data1: '', season: '', status: '', hodDates: [] };
+                grid.setSourceArrayBuffer(null);
+                if (selectStatusHod) {
+                    selectStatusHod.innerHTML = '';
+                    selectStatusHod.disabled = true;
+                }
+                grid.setActiveModule('facturacion');
+                updateExportButtonLabel();
+                syncModuleView();
+
+                btnReimport.classList.add('hidden');
+                dataView.classList.add('hidden');
+                menuView.classList.add('hidden');
+                importView.classList.remove('hidden');
             }
-            grid.setActiveModule('facturacion');
-            updateExportButtonLabel();
-            syncModuleView();
-            
-            // Volver a vista de importación
-            dataView.classList.add('hidden');
-            menuView.classList.add('hidden');
-            importView.classList.remove('hidden');
-        }
-    });
+        });
+    }
 
     updateExportButtonLabel();
     syncModuleView();
