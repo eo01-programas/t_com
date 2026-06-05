@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Facturación LLL - Gestor de Plantilla</title>
     <!-- Cargar CSS principal -->
-    <link rel="stylesheet" href="css/styles.css?v=1.1.19">
+    <link rel="stylesheet" href="css/styles.css?v=1.1.20">
     <!-- Cargar librería SheetJS (XLSX) para parsear y exportar archivos Excel -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js"></script>
 </head>
@@ -18,7 +18,9 @@
                 <p>Generación de cuadrícula de facturación a partir del reporte global LLL</p>
             </div>
             <div class="header-actions">
-                <!-- Espacio para botones globales si fuesen necesarios -->
+                <button id="btn-reimport" class="btn-secondary header-back-btn hidden" type="button" title="Subir otro archivo global">
+                    <span>📂 Volver a Importar</span>
+                </button>
             </div>
         </header>
 
@@ -118,6 +120,37 @@
                 </div>
             </div>
 
+            <!-- Controles de Distribución (visible solo en modo distribución) -->
+            <div id="distribution-controls" class="distribution-controls">
+                <div class="dist-config-card">
+                    <h3 class="dist-config-title">Configuración de Exportación — Distribución</h3>
+                    <div class="dist-config-body">
+                        <div class="dist-filter-group">
+                            <label class="dist-filter-label">Status Season a incluir</label>
+                            <select id="filter-dist-season" class="dist-season-select" multiple size="5"></select>
+                            <small class="dist-filter-hint">Sin selección = todos los Status · Ctrl/Cmd+clic para varios</small>
+                        </div>
+                        <div class="dist-filter-group">
+                            <label class="dist-filter-label">Archivos a generar</label>
+                            <div class="dist-module-checks">
+                                <label class="dist-check-item">
+                                    <input type="checkbox" id="dist-check-lll" value="LLL" checked>
+                                    <span>LLL WIP</span>
+                                </label>
+                                <label class="dist-check-item">
+                                    <input type="checkbox" id="dist-check-expo" value="EXPO" checked>
+                                    <span>Expo WIP</span>
+                                </label>
+                                <label class="dist-check-item">
+                                    <input type="checkbox" id="dist-check-pcp" value="PCP" checked>
+                                    <span>PCP WIP</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Barra de Filtros y Búsqueda -->
             <div class="filters-bar">
                 <div class="filters-left-group">
@@ -156,9 +189,6 @@
                         <button id="btn-back-menu" class="btn-secondary" title="Volver al menú de módulos">
                             <span>🏠 Menú</span>
                         </button>
-                        <button id="btn-new-import" class="btn-secondary">
-                            <span>📂 Importar Nuevo</span>
-                        </button>
                         <button id="btn-export" class="btn-primary">
                             <span>📥 Exportar a Excel</span>
                         </button>
@@ -176,10 +206,10 @@
     </div>
 
     <!-- CARGAR LÓGICA DE APLICACIÓN -->
-    <script src="js/formulas.js?v=1.1.19"></script>
-    <script src="js/excelParser.js?v=1.1.19"></script>
-    <script src="js/distributionColumns.js?v=1.1.19"></script>
-    <script src="js/gridController.js?v=1.1.19"></script>
-    <script src="js/app.js?v=1.1.19"></script>
+    <script src="js/formulas.js?v=1.1.20"></script>
+    <script src="js/excelParser.js?v=1.1.20"></script>
+    <script src="js/distributionColumns.js?v=1.1.20"></script>
+    <script src="js/gridController.js?v=1.1.20"></script>
+    <script src="js/app.js?v=1.1.20"></script>
 </body>
 </html>
