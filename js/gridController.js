@@ -1082,6 +1082,7 @@ class GridController {
                 ? dateToExcelSerial(row.fechaDespacho)
                 : null;
             const textValue = (value) => String(value || '').trim();
+            const pivotExcelRow = pivotData.length + 1;
 
             pivotData.push([
                 textValue(row.cliente),
@@ -1122,10 +1123,19 @@ class GridController {
                 {
                     t: 'n',
                     v: Number(row.wk) || 0,
+                    f: `WEEKNUM(N${pivotExcelRow})`,
                     z: '0'
                 },
-                textValue(row.month),
-                textValue(row.year3),
+                {
+                    t: 'str',
+                    v: textValue(row.month),
+                    f: `TEXT(N${pivotExcelRow},"MMMM")`
+                },
+                {
+                    t: 'str',
+                    v: textValue(row.year3),
+                    f: `TEXT(N${pivotExcelRow},"YYY")`
+                },
                 {
                     t: 'n',
                     v: marginValue,
@@ -1134,6 +1144,7 @@ class GridController {
                 {
                     t: 'n',
                     v: totalUsValue * marginValue,
+                    f: `M${pivotExcelRow}*S${pivotExcelRow}`,
                     z: '$#,##0.00'
                 }
             ]);
@@ -1357,6 +1368,7 @@ class GridController {
             r_cols.push({
                 t: 'n',
                 v: row.totalUsMargen || 0,
+                f: `M${excelRow}*S${excelRow}`,
                 z: '$#,##0.00'
             });
 
@@ -1381,10 +1393,61 @@ class GridController {
     }
 
     /**
+     * Devuelve los valores únicos de la columna STATUS Season del archivo fuente.
+     */
+    getDistributionStatusSeasonOptions() {
+        if (!this.sourceArrayBuffer) return [];
+
+        const norm = (text) => {
+            if (text === null || text === undefined) return '';
+            return String(text).toLowerCase().replace(/\r?\n|\r/g, ' ')
+                .normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+        };
+
+        const sourceWorkbook = XLSX.read(new Uint8Array(this.sourceArrayBuffer), {
+            type: 'array', cellStyles: true, cellFormula: true,
+            cellNF: true, cellText: false, cellDates: true
+        });
+
+        const sourceSheetName = sourceWorkbook.SheetNames.includes('LLL GR.')
+            ? 'LLL GR.' : sourceWorkbook.SheetNames[0];
+        const sourceWs = sourceWorkbook.Sheets[sourceSheetName];
+
+        if (!sourceWs || !sourceWs['!ref']) return [];
+
+        const sourceRange = XLSX.utils.decode_range(sourceWs['!ref']);
+        const headerRowIndex = 5;
+
+        let statusSeasonCol = 3;
+        for (let c = sourceRange.s.c; c <= sourceRange.e.c; c += 1) {
+            const hCell = sourceWs[XLSX.utils.encode_cell({ r: headerRowIndex, c })];
+            if (norm(hCell ? hCell.v : '') === 'status season') {
+                statusSeasonCol = c;
+                break;
+            }
+        }
+
+        const seen = new Map();
+        for (let r = headerRowIndex + 1; r <= sourceRange.e.r; r += 1) {
+            const cell = sourceWs[XLSX.utils.encode_cell({ r: r, c: statusSeasonCol })];
+            if (!cell || cell.v === null || cell.v === undefined || cell.v === '') continue;
+            const raw = String(cell.v).trim();
+            const normalized = norm(raw);
+            if (normalized && !seen.has(normalized)) {
+                seen.set(normalized, raw);
+            }
+        }
+
+        return [...seen.entries()]
+            .map(([value, label]) => ({ value, label }))
+            .sort((a, b) => a.label.localeCompare(b.label));
+    }
+
+    /**
      * Exporta los 3 archivos de Distribución usando la plantilla de columnas
      * marcada por colores en Lululemon 7.31.25.xlsx.
      */
-    exportDistributionExcels() {
+    exportDistributionExcels(options = {}) {
         if (!this.sourceArrayBuffer) {
             alert('No se encontró el archivo fuente cargado. Vuelve a importar el global antes de exportar Distribución.');
             return;
@@ -1453,9 +1516,16 @@ class GridController {
             targetWs[XLSX.utils.encode_cell({ r: targetRow, c: targetCol })] = clonedCell;
         };
 
-        const moduleOrder = ['LLL', 'EXPO', 'PCP'];
+        const statusFilter = Array.isArray(options.statusSeasons) && options.statusSeasons.length > 0
+            ? options.statusSeasons
+            : ['produccion'];
 
-        moduleOrder.forEach((moduleKey) => {
+        const moduleOrder = ['LLL', 'EXPO', 'PCP'];
+        const modulesToExport = Array.isArray(options.modules) && options.modules.length > 0
+            ? options.modules.filter(m => moduleOrder.includes(m))
+            : moduleOrder;
+
+        modulesToExport.forEach((moduleKey) => {
             const moduleConfig = window.DistributionModuleConfig[moduleKey];
             if (!moduleConfig) return;
 
@@ -1483,10 +1553,10 @@ class GridController {
                 targetRow += 1;
             }
 
-            // Copiar solo filas con STATUS Season = Producción
+            // Copiar solo filas cuyo STATUS Season esté en el filtro activo
             for (let sourceRow = headerRowIndex + 1; sourceRow <= sourceRange.e.r; sourceRow += 1) {
                 const statusCell = sourceWs[XLSX.utils.encode_cell({ r: sourceRow, c: statusSeasonCol })];
-                if (normalizeText(statusCell ? statusCell.v : '') !== 'produccion') {
+                if (!statusFilter.includes(normalizeText(statusCell ? statusCell.v : ''))) {
                     continue;
                 }
 
@@ -1510,6 +1580,8 @@ class GridController {
                     c: Math.max(selectedCols.length - 1, 0)
                 }
             });
+
+            this.applyExcelTheme(outWs, { headerRows: 1 });
 
             XLSX.utils.book_append_sheet(outWb, outWs, moduleConfig.sheetName);
             outWb.Props = { ...(outWb.Props || {}), Title: moduleConfig.title };
@@ -1676,6 +1748,27 @@ class GridController {
             };
         };
 
+        const makeFormulaDateCell = (formula, value) => ({
+            t: 'n',
+            v: value === null || value === undefined ? '' : value,
+            f: formula,
+            z: 'd-mmm-yy'
+        });
+
+        const makeFormulaNumberCell = (formula, value, format = '#,##0') => ({
+            t: 'n',
+            v: value === null || value === undefined ? 0 : value,
+            f: formula,
+            z: format
+        });
+
+        const makeFormulaPercentCell = (formula, value) => ({
+            t: 'n',
+            v: value === null || value === undefined ? 0 : value,
+            f: formula,
+            z: '0.00%'
+        });
+
         const accumulateMin = (currentValue, nextValue) => {
             if (nextValue === null || nextValue === undefined || nextValue === '') {
                 return currentValue;
@@ -1696,11 +1789,42 @@ class GridController {
             return nextValue > currentValue ? nextValue : currentValue;
         };
 
+        // En Status, cada HOD se exporta como un solo paquete:
+        // los inicios toman la fecha más temprana y los cierres la fecha más tardía.
+        const takeEarliestDate = accumulateMin;
+        const takeLatestDate = accumulateMax;
+
         const uniqueOrVarious = (values) => {
             const cleaned = [...new Set(values.map(textValue).filter(Boolean))];
             if (cleaned.length === 0) return '';
             if (cleaned.length === 1) return cleaned[0];
             return 'VARIOS';
+        };
+
+        const parseSewingLineCount = (rawText) => {
+            if (!rawText) return 0;
+            const text = String(rawText).trim();
+            if (!text) return 0;
+
+            // Separar por ' - ' (guión con espacios) para dividir en grupos principales
+            // Ej: 'L3 STA ANITA - L15 COFACO' → ['L3 STA ANITA', 'L15 COFACO']
+            const groups = text.split(/\s+-\s+/);
+            let total = 0;
+
+            for (const group of groups) {
+                // Buscar patrón L seguido de dígitos, opcionalmente continuado con -dígitos
+                // Ej: L7-27-8-2-3 → captura '7-27-8-2-3' → 5 partes
+                const match = group.match(/L(\d+(?:-\d+)*)/i);
+                if (match) {
+                    total += match[1].split('-').length;
+                } else {
+                    // Sin prefijo L: contar números sueltos
+                    const nums = group.match(/\b\d+\b/g);
+                    if (nums) total += nums.length;
+                }
+            }
+
+            return total;
         };
 
         const sourceWorkbook = XLSX.read(new Uint8Array(this.sourceArrayBuffer), {
@@ -1789,6 +1913,33 @@ class GridController {
             return values.length > 0 ? values.join(' | ') : '';
         };
 
+        const statusDetailHeaders = [
+            'HOD',
+            'TOTAL',
+            'DYE Start',
+            'DYE End',
+            'DYE %',
+            'Fabric Planned',
+            'Fabric Actual',
+            'CUT Start',
+            'CUT End',
+            'CUT Planned',
+            'CUT %',
+            'SEW Start',
+            'SEW End',
+            'SEW Planned',
+            'SEW %',
+            'FINISH Start',
+            'FINISH End',
+            'FINISH %',
+            'INSPECTION Planned',
+            'INSPECTION Actual',
+            'INSPECTION %',
+            'Sewing Line Count',
+            'Sewing Line',
+            'Comments'
+        ];
+
         const statusHeaders = [
             'HOD\nLLL',
             'TOTAL',
@@ -1811,6 +1962,7 @@ class GridController {
             'Plnd Start Date (SEW)',
             'Plnd End Date (SEW)',
             '# of lines',
+            'lines',
             'Completed units',
             '%',
             'Planned Sewing for balance',
@@ -1833,6 +1985,7 @@ class GridController {
         ];
 
         const packageMap = new Map();
+        const statusDetailData = [statusDetailHeaders];
 
         for (let sourceRow = headerRowIndex + 1; sourceRow <= sourceRange.e.r; sourceRow += 1) {
             const seasonStatus = this.normalizeText(getSourceCellValue(sourceRow, 'STATUS\nSeason'));
@@ -1943,31 +2096,61 @@ class GridController {
             bucket.sewPercentSum += sewPercent;
             bucket.finishPercentSum += finishPercent;
             bucket.inspectionPercentSum += inspectionPercent;
-            bucket.dyeStartSerial = accumulateMin(bucket.dyeStartSerial, dyeStartSerial);
-            bucket.dyeEndSerial = accumulateMax(bucket.dyeEndSerial, dyeEndSerial);
-            bucket.fabricPlannedSerial = accumulateMax(bucket.fabricPlannedSerial, fabricPlannedSerial);
-            bucket.fabricActualSerial = accumulateMax(bucket.fabricActualSerial, fabricActualSerial);
-            bucket.cutStartSerial = accumulateMin(bucket.cutStartSerial, cutStartSerial);
-            bucket.cutEndSerial = accumulateMax(bucket.cutEndSerial, cutEndSerial);
-            bucket.cutPlannedSerial = accumulateMax(bucket.cutPlannedSerial, cutPlannedSerial);
-            bucket.sewStartSerial = accumulateMin(bucket.sewStartSerial, sewStartSerial);
-            bucket.sewEndSerial = accumulateMax(bucket.sewEndSerial, sewEndSerial);
-            bucket.sewPlannedSerial = accumulateMax(bucket.sewPlannedSerial, sewPlannedSerial);
-            bucket.finishStartSerial = accumulateMin(bucket.finishStartSerial, finishStartSerial);
-            bucket.finishEndSerial = accumulateMax(bucket.finishEndSerial, finishEndSerial);
-            bucket.inspectionPlannedSerial = accumulateMax(bucket.inspectionPlannedSerial, inspectionPlannedSerial);
-            bucket.inspectionActualSerial = accumulateMax(bucket.inspectionActualSerial, inspectionActualSerial);
+            bucket.dyeStartSerial = takeEarliestDate(bucket.dyeStartSerial, dyeStartSerial);
+            bucket.dyeEndSerial = takeLatestDate(bucket.dyeEndSerial, dyeEndSerial);
+            bucket.fabricPlannedSerial = takeLatestDate(bucket.fabricPlannedSerial, fabricPlannedSerial);
+            bucket.fabricActualSerial = takeLatestDate(bucket.fabricActualSerial, fabricActualSerial);
+            bucket.cutStartSerial = takeEarliestDate(bucket.cutStartSerial, cutStartSerial);
+            bucket.cutEndSerial = takeLatestDate(bucket.cutEndSerial, cutEndSerial);
+            bucket.cutPlannedSerial = takeLatestDate(bucket.cutPlannedSerial, cutPlannedSerial);
+            bucket.sewStartSerial = takeEarliestDate(bucket.sewStartSerial, sewStartSerial);
+            bucket.sewEndSerial = takeLatestDate(bucket.sewEndSerial, sewEndSerial);
+            bucket.sewPlannedSerial = takeLatestDate(bucket.sewPlannedSerial, sewPlannedSerial);
+            bucket.finishStartSerial = takeEarliestDate(bucket.finishStartSerial, finishStartSerial);
+            bucket.finishEndSerial = takeLatestDate(bucket.finishEndSerial, finishEndSerial);
+            bucket.inspectionPlannedSerial = takeLatestDate(bucket.inspectionPlannedSerial, inspectionPlannedSerial);
+            bucket.inspectionActualSerial = takeLatestDate(bucket.inspectionActualSerial, inspectionActualSerial);
             bucket.sewingLines.push(textValue(getSourceCellValue(sourceRow, 'Sewing LINE')));
             bucket.comments.push(getCommentsText(sourceRow));
+            statusDetailData.push([
+                hodSerial,
+                totalQty,
+                dyeStartSerial,
+                dyeEndSerial,
+                dyePercent,
+                fabricPlannedSerial,
+                fabricActualSerial,
+                cutStartSerial,
+                cutEndSerial,
+                cutPlannedSerial,
+                cutPercent,
+                sewStartSerial,
+                sewEndSerial,
+                sewPlannedSerial,
+                sewPercent,
+                finishStartSerial,
+                finishEndSerial,
+                finishPercent,
+                inspectionPlannedSerial,
+                inspectionActualSerial,
+                inspectionPercent,
+                parseSewingLineCount(textValue(getSourceCellValue(sourceRow, 'Sewing LINE'))),
+                textValue(getSourceCellValue(sourceRow, 'Sewing LINE')),
+                getCommentsText(sourceRow)
+            ]);
         }
-
-        const statusData = [statusHeaders];
 
         const packageRows = [...packageMap.values()].sort((a, b) => {
             const serialA = a.hodSerial === null || a.hodSerial === undefined ? Number.POSITIVE_INFINITY : a.hodSerial;
             const serialB = b.hodSerial === null || b.hodSerial === undefined ? Number.POSITIVE_INFINITY : b.hodSerial;
             return serialA - serialB;
         });
+
+        const detailSheetName = 'Status Base';
+        const detailLastRow = statusDetailData.length;
+        const detailRange = (columnLetter) => `'${detailSheetName}'!$${columnLetter}$2:$${columnLetter}$${detailLastRow}`;
+
+        const statusData = [statusHeaders];
 
         for (const bucket of packageRows) {
             const avgDyePercent = bucket.rowCount > 0 ? bucket.dyePercentSum / bucket.rowCount : 0;
@@ -1985,47 +2168,125 @@ class GridController {
 
                 return Math.max(...candidates);
             })();
+            const excelRow = statusData.length + 1;
+            const hodRef = `$A${excelRow}`;
 
             statusData.push([
                 makeDateCell(bucket.hodSerial),
-                makeNumberCell(bucket.totalQty),
+                makeFormulaNumberCell(`SUMIFS(${detailRange('B')},${detailRange('A')},${hodRef})`, bucket.totalQty),
                 '',
                 '',
-                makeDateCell(bucket.dyeStartSerial),
-                makeDateCell(bucket.dyeEndSerial),
-                makeNumberCell(Math.round(bucket.totalQty * avgDyePercent)),
-                makePercentCell(avgDyePercent),
-                makeDateCell(bucket.fabricPlannedSerial),
-                makeDateCell(bucket.fabricActualSerial),
-                makeNumberCell(bucket.hodSerial !== null && bucket.fabricPlannedSerial !== null ? Math.round(bucket.hodSerial - bucket.fabricPlannedSerial) : null),
-                makeDateCell(bucket.cutStartSerial),
-                makeDateCell(bucket.cutEndSerial),
-                makeNumberCell(Math.round(bucket.totalQty * avgCutPercent)),
-                makePercentCell(avgCutPercent),
-                makeDateCell(bucket.cutPlannedSerial),
-                makeDateCell(bucket.cutEndSerial),
-                makeNumberCell(bucket.hodSerial !== null && bucket.cutPlannedSerial !== null ? Math.round(bucket.hodSerial - bucket.cutPlannedSerial) : null),
-                makeDateCell(bucket.sewStartSerial),
-                makeDateCell(bucket.sewEndSerial),
-                uniqueOrVarious(bucket.sewingLines),
-                makeNumberCell(Math.round(bucket.totalQty * avgSewPercent)),
-                makePercentCell(avgSewPercent),
-                makeDateCell(bucket.sewPlannedSerial),
-                makeDateCell(bucket.sewEndSerial),
-                makeNumberCell(bucket.hodSerial !== null && bucket.sewPlannedSerial !== null ? Math.round(bucket.hodSerial - bucket.sewPlannedSerial) : null),
-                makeDateCell(bucket.finishStartSerial),
-                makeDateCell(bucket.finishEndSerial),
-                '',
-                makeNumberCell(Math.round(bucket.totalQty * avgFinishPercent)),
-                makePercentCell(avgFinishPercent),
-                makeDateCell(bucket.finishEndSerial),
-                makeDateCell(bucket.finishEndSerial),
-                makeNumberCell(bucket.hodSerial !== null && bucket.finishEndSerial !== null ? Math.round(bucket.hodSerial - bucket.finishEndSerial) : null),
-                makeDateCell(bucket.inspectionPlannedSerial),
-                makeNumberCell(Math.round(bucket.totalQty * avgInspectionPercent)),
-                makePercentCell(avgInspectionPercent),
-                makeDateCell(bucket.inspectionActualSerial),
-                makeNumberCell(bucket.hodSerial !== null && inspectionReferenceSerial !== null ? Math.round(bucket.hodSerial - inspectionReferenceSerial) : null),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('C')},"<>")=0,"",MINIFS(${detailRange('C')},${detailRange('A')},${hodRef}))`,
+                    bucket.dyeStartSerial
+                ),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('D')},"<>")=0,"",MAXIFS(${detailRange('D')},${detailRange('A')},${hodRef}))`,
+                    bucket.dyeEndSerial
+                ),
+                makeFormulaNumberCell(`ROUND($B${excelRow}*$H${excelRow},0)`, Math.round(bucket.totalQty * avgDyePercent)),
+                makeFormulaPercentCell(`AVERAGEIFS(${detailRange('E')},${detailRange('A')},${hodRef})`, avgDyePercent),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('F')},"<>")=0,"",MAXIFS(${detailRange('F')},${detailRange('A')},${hodRef}))`,
+                    bucket.fabricPlannedSerial
+                ),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('G')},"<>")=0,"",MAXIFS(${detailRange('G')},${detailRange('A')},${hodRef}))`,
+                    bucket.fabricActualSerial
+                ),
+                makeFormulaNumberCell(
+                    `IF(OR($A${excelRow}="",F${excelRow}=""),"", $A${excelRow}-F${excelRow})`,
+                    bucket.hodSerial !== null && bucket.dyeEndSerial !== null ? Math.round(bucket.hodSerial - bucket.dyeEndSerial) : null
+                ),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('H')},"<>")=0,"",MINIFS(${detailRange('H')},${detailRange('A')},${hodRef}))`,
+                    bucket.cutStartSerial
+                ),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('I')},"<>")=0,"",MAXIFS(${detailRange('I')},${detailRange('A')},${hodRef}))`,
+                    bucket.cutEndSerial
+                ),
+                makeFormulaNumberCell(`ROUND($B${excelRow}*$O${excelRow},0)`, Math.round(bucket.totalQty * avgCutPercent)),
+                makeFormulaPercentCell(`AVERAGEIFS(${detailRange('K')},${detailRange('A')},${hodRef})`, avgCutPercent),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('J')},"<>")=0,"",MAXIFS(${detailRange('J')},${detailRange('A')},${hodRef}))`,
+                    bucket.cutPlannedSerial
+                ),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('I')},"<>")=0,"",MAXIFS(${detailRange('I')},${detailRange('A')},${hodRef}))`,
+                    bucket.cutEndSerial
+                ),
+                makeFormulaNumberCell(
+                    `IF(OR($A${excelRow}="",M${excelRow}=""),"", $A${excelRow}-M${excelRow})`,
+                    bucket.hodSerial !== null && bucket.cutEndSerial !== null ? Math.round(bucket.hodSerial - bucket.cutEndSerial) : null
+                ),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('L')},"<>")=0,"",MINIFS(${detailRange('L')},${detailRange('A')},${hodRef}))`,
+                    bucket.sewStartSerial
+                ),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('M')},"<>")=0,"",MAXIFS(${detailRange('M')},${detailRange('A')},${hodRef}))`,
+                    bucket.sewEndSerial
+                ),
+                makeFormulaNumberCell(
+                    `SUMIFS(${detailRange('V')},${detailRange('A')},${hodRef})`,
+                    bucket.sewingLines.filter(textValue).reduce((s, v) => s + parseSewingLineCount(v), 0)
+                ),
+                [...new Set(bucket.sewingLines.map(textValue).filter(Boolean))].join(' | '),
+                makeFormulaNumberCell(`ROUND($B${excelRow}*$X${excelRow},0)`, Math.round(bucket.totalQty * avgSewPercent)),
+                makeFormulaPercentCell(`AVERAGEIFS(${detailRange('O')},${detailRange('A')},${hodRef})`, avgSewPercent),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('N')},"<>")=0,"",MAXIFS(${detailRange('N')},${detailRange('A')},${hodRef}))`,
+                    bucket.sewPlannedSerial
+                ),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('M')},"<>")=0,"",MAXIFS(${detailRange('M')},${detailRange('A')},${hodRef}))`,
+                    bucket.sewEndSerial
+                ),
+                makeFormulaNumberCell(
+                    `IF(OR($A${excelRow}="",T${excelRow}=""),"", $A${excelRow}-T${excelRow})`,
+                    bucket.hodSerial !== null && bucket.sewEndSerial !== null ? Math.round(bucket.hodSerial - bucket.sewEndSerial) : null
+                ),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('P')},"<>")=0,"",MINIFS(${detailRange('P')},${detailRange('A')},${hodRef}))`,
+                    bucket.finishStartSerial
+                ),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('Q')},"<>")=0,"",MAXIFS(${detailRange('Q')},${detailRange('A')},${hodRef}))`,
+                    bucket.finishEndSerial
+                ),
+                makeFormulaNumberCell(
+                    `SUMIFS(${detailRange('V')},${detailRange('A')},${hodRef})`,
+                    bucket.sewingLines.filter(textValue).reduce((s, v) => s + parseSewingLineCount(v), 0)
+                ),
+                makeFormulaNumberCell(`ROUND($B${excelRow}*$AF${excelRow},0)`, Math.round(bucket.totalQty * avgFinishPercent)),
+                makeFormulaPercentCell(`AVERAGEIFS(${detailRange('R')},${detailRange('A')},${hodRef})`, avgFinishPercent),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('Q')},"<>")=0,"",MAXIFS(${detailRange('Q')},${detailRange('A')},${hodRef}))`,
+                    bucket.finishEndSerial
+                ),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('Q')},"<>")=0,"",MAXIFS(${detailRange('Q')},${detailRange('A')},${hodRef}))`,
+                    bucket.finishEndSerial
+                ),
+                makeFormulaNumberCell(
+                    `IF(OR($A${excelRow}="",AC${excelRow}=""),"", $A${excelRow}-AC${excelRow})`,
+                    bucket.hodSerial !== null && bucket.finishEndSerial !== null ? Math.round(bucket.hodSerial - bucket.finishEndSerial) : null
+                ),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('S')},"<>")=0,"",MAXIFS(${detailRange('S')},${detailRange('A')},${hodRef}))`,
+                    bucket.inspectionPlannedSerial
+                ),
+                makeFormulaNumberCell(`ROUND($B${excelRow}*$AL${excelRow},0)`, Math.round(bucket.totalQty * avgInspectionPercent)),
+                makeFormulaPercentCell(`AVERAGEIFS(${detailRange('U')},${detailRange('A')},${hodRef})`, avgInspectionPercent),
+                makeFormulaDateCell(
+                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('T')},"<>")=0,"",MAXIFS(${detailRange('T')},${detailRange('A')},${hodRef}))`,
+                    bucket.inspectionActualSerial
+                ),
+                makeFormulaNumberCell(
+                    `IF(COUNTA(AJ${excelRow},AM${excelRow})=0,"",$A${excelRow}-MAX(AJ${excelRow},AM${excelRow}))`,
+                    bucket.hodSerial !== null && inspectionReferenceSerial !== null ? Math.round(bucket.hodSerial - inspectionReferenceSerial) : null
+                ),
                 uniqueOrVarious(bucket.comments)
             ]);
         }
@@ -2046,7 +2307,10 @@ class GridController {
                 return { wch: 34 };
             }
             if (headerText === '# of lines') {
-                return { wch: 14 };
+                return { wch: 12 };
+            }
+            if (headerText === 'lines') {
+                return { wch: 38 };
             }
             if (headerText === '%') {
                 return { wch: 10 };
@@ -2059,6 +2323,14 @@ class GridController {
         this.applyExcelTheme(ws);
 
         XLSX.utils.book_append_sheet(wb, ws, 'Production Status');
+        const detailWs = XLSX.utils.aoa_to_sheet(statusDetailData);
+        detailWs['!cols'] = statusDetailHeaders.map(() => ({ wch: 18 }));
+        XLSX.utils.book_append_sheet(wb, detailWs, detailSheetName);
+        wb.Workbook = wb.Workbook || {};
+        wb.Workbook.Sheets = wb.SheetNames.map((name) => ({
+            name,
+            Hidden: name === detailSheetName ? 1 : 0
+        }));
         wb.Props = { ...(wb.Props || {}), Title: 'Production Status' };
         XLSX.writeFile(wb, 'Production Status.xlsx', { cellStyles: true });
     }
