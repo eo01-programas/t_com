@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Facturación LLL - Gestor de Plantilla</title>
     <!-- Cargar CSS principal -->
-    <link rel="stylesheet" href="css/styles.css?v=1.1.20">
+    <link rel="stylesheet" href="css/styles.css?v=1.1.24">
     <!-- Cargar librería SheetJS (XLSX) para parsear y exportar archivos Excel -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js"></script>
 </head>
@@ -32,17 +32,12 @@
 
         <!-- 1. VISTA DE IMPORTACIÓN (SECCIÓN DE CARGA) -->
         <section id="import-view" class="import-view">
-            <div class="import-card">
-                <div class="upload-area" id="drag-drop-area">
-                    <span class="upload-icon">📊</span>
-                    <h3>Importa tu reporte global</h3>
-                    <p>Arrastra y suelta tu archivo <strong>LLL Global Report.xlsx</strong> aquí, o haz click para explorar tus archivos locales.</p>
-                    <label for="excel-file-input" class="btn-primary">
-                        <span>Seleccionar Archivo</span>
-                    </label>
-                    <input type="file" id="excel-file-input" class="file-input-hidden" accept=".xlsx, .xls">
-                </div>
+            <div class="import-mode-switch" aria-label="Selector de tipo de importación">
+                <button id="btn-import-global" class="import-mode-btn active" type="button">Importar LLL Global</button>
+                <button id="btn-import-sdr" class="import-mode-btn" type="button">Importar LLL SDR</button>
             </div>
+            <input type="file" id="file-input-global" class="file-input-hidden" accept=".xlsx, .xls">
+            <input type="file" id="file-input-sdr" class="file-input-hidden" accept=".xlsx, .xls">
         </section>
 
         <!-- 1.5 VISTA DE MENÚ PRINCIPAL (MÓDULOS) -->
@@ -75,6 +70,15 @@
                         <div class="menu-card-body">
                             <h3>Status</h3>
                             <p>Exportación del archivo Production Status con KPIs de producción y seguimiento por proceso.</p>
+                            <span class="menu-card-badge">Disponible</span>
+                        </div>
+                    </div>
+                    <!-- Seguimiento (Activo) -->
+                    <div class="menu-card active" id="menu-opt-seguimiento">
+                        <div class="menu-card-icon">📋</div>
+                        <div class="menu-card-body">
+                            <h3>Seguimiento</h3>
+                            <p>Exportación con acumulado de estados por HOD: Bulk Fabric, Garment Test, Gb Test, Priority, HAS y PP Approved.</p>
                             <span class="menu-card-badge">Disponible</span>
                         </div>
                     </div>
@@ -124,6 +128,32 @@
             <div id="distribution-controls" class="distribution-controls">
                 <div class="dist-config-card">
                     <h3 class="dist-config-title">Configuración de Exportación — Distribución</h3>
+                    <p class="dist-config-subtitle">
+                        Los colores de la plantilla definen el tipo de encabezado que verá cada archivo generado.
+                    </p>
+                    <div class="dist-legend" aria-label="Leyenda de colores de distribución">
+                        <div class="dist-legend-item dist-legend-item--lll">
+                            <span class="dist-legend-swatch"></span>
+                            <div>
+                                <strong>LLL WIP</strong>
+                                <small>Encabezados azules</small>
+                            </div>
+                        </div>
+                        <div class="dist-legend-item dist-legend-item--expo">
+                            <span class="dist-legend-swatch"></span>
+                            <div>
+                                <strong>EXPO WIP</strong>
+                                <small>Encabezados rosados</small>
+                            </div>
+                        </div>
+                        <div class="dist-legend-item dist-legend-item--pcp">
+                            <span class="dist-legend-swatch"></span>
+                            <div>
+                                <strong>PCP WIP</strong>
+                                <small>Encabezados verdes</small>
+                            </div>
+                        </div>
+                    </div>
                     <div class="dist-config-body">
                         <div class="dist-filter-group">
                             <label class="dist-filter-label">Status Season a incluir</label>
@@ -131,19 +161,28 @@
                             <small class="dist-filter-hint">Sin selección = todos los Status · Ctrl/Cmd+clic para varios</small>
                         </div>
                         <div class="dist-filter-group">
-                            <label class="dist-filter-label">Archivos a generar</label>
+                            <label class="dist-filter-label">Archivos / encabezados a generar</label>
                             <div class="dist-module-checks">
-                                <label class="dist-check-item">
+                                <label class="dist-check-item dist-check-item--lll">
                                     <input type="checkbox" id="dist-check-lll" value="LLL" checked>
-                                    <span>LLL WIP</span>
+                                    <span class="dist-check-copy">
+                                        <strong>LLL WIP</strong>
+                                        <small>Encabezados azules del template</small>
+                                    </span>
                                 </label>
-                                <label class="dist-check-item">
+                                <label class="dist-check-item dist-check-item--expo">
                                     <input type="checkbox" id="dist-check-expo" value="EXPO" checked>
-                                    <span>Expo WIP</span>
+                                    <span class="dist-check-copy">
+                                        <strong>EXPO WIP</strong>
+                                        <small>Encabezados rosados del template</small>
+                                    </span>
                                 </label>
-                                <label class="dist-check-item">
+                                <label class="dist-check-item dist-check-item--pcp">
                                     <input type="checkbox" id="dist-check-pcp" value="PCP" checked>
-                                    <span>PCP WIP</span>
+                                    <span class="dist-check-copy">
+                                        <strong>PCP WIP</strong>
+                                        <small>Encabezados verdes del template</small>
+                                    </span>
                                 </label>
                             </div>
                         </div>
@@ -183,9 +222,32 @@
 
                 <div class="filters-right-group">
                     <div class="status-toolbar">
-                        <select id="filter-status-hod" class="filter-select hidden" title="Filtrar Status por fecha HOD" multiple size="6">
-                        </select>
-                        <small class="status-hod-help hidden" id="status-hod-help">Ctrl/Cmd + clic para seleccionar varios HOD</small>
+                        <!-- Filtro HOD estilo Excel (visible solo en módulo Status) -->
+                    <div id="status-hod-filter-wrap" class="hod-filter-wrap hidden">
+                        <button type="button" id="btn-hod-filter-toggle" class="btn-secondary hod-filter-toggle-btn">
+                            <span id="hod-filter-label">HOD: Todos</span>
+                            <span class="hod-dropdown-arrow">▾</span>
+                        </button>
+                        <div id="hod-filter-panel" class="hod-filter-panel hidden">
+                            <div class="hod-panel-top">
+                                <select id="hod-month-select" class="hod-month-select">
+                                    <option value="">Todos los meses</option>
+                                </select>
+                                <input type="text" id="hod-date-search" class="hod-date-search" placeholder="Buscar fecha...">
+                            </div>
+                            <div class="hod-check-list-header">
+                                <label class="hod-check-row hod-check-all-row">
+                                    <input type="checkbox" id="hod-check-all" class="hod-checkbox">
+                                    <span>(Seleccionar todos)</span>
+                                </label>
+                            </div>
+                            <div id="hod-check-list" class="hod-check-list"></div>
+                            <div class="hod-panel-footer">
+                                <button type="button" id="btn-hod-accept" class="btn-primary hod-btn-sm">Aceptar</button>
+                                <button type="button" id="btn-hod-clear" class="btn-secondary hod-btn-sm">Limpiar</button>
+                            </div>
+                        </div>
+                    </div>
                         <button id="btn-back-menu" class="btn-secondary" title="Volver al menú de módulos">
                             <span>🏠 Menú</span>
                         </button>
@@ -203,13 +265,99 @@
                 </div>
             </div>
         </section>
+
+        <!-- 3. VISTA SDR (FLUJO INDEPENDIENTE) -->
+        <section id="sdr-view" class="sdr-view hidden">
+            <div class="sdr-hero-card">
+                <div class="sdr-hero-copy">
+                    <span class="sdr-kicker">Flujo independiente</span>
+                    <h2>LLL SDR</h2>
+                    <p>Vista separada para el reporte Supplier Sourcing Delivery Report.</p>
+                </div>
+                <div class="sdr-hero-meta">
+                    <span>Archivo cargado</span>
+                    <strong id="sdr-source-name">Sin archivo cargado</strong>
+                    <button id="btn-download-sdr" class="btn-primary sdr-download-btn hidden" type="button">
+                        <span>Descargar SDR WIP</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="kpis-grid" id="sdr-kpis-container">
+                <div class="kpi-card">
+                    <div class="kpi-icon-wrapper">📄</div>
+                    <div class="kpi-info">
+                        <h4>Filas SDR</h4>
+                        <div class="kpi-value" id="sdr-kpi-rows">0</div>
+                    </div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-icon-wrapper">📦</div>
+                    <div class="kpi-info">
+                        <h4>Current Quantity</h4>
+                        <div class="kpi-value" id="sdr-kpi-current-qty">0</div>
+                    </div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-icon-wrapper">📥</div>
+                    <div class="kpi-info">
+                        <h4>Shipped Quantity</h4>
+                        <div class="kpi-value" id="sdr-kpi-shipped-qty">0</div>
+                    </div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-icon-wrapper">📊</div>
+                    <div class="kpi-info">
+                        <h4>Temporadas</h4>
+                        <div class="kpi-value" id="sdr-kpi-seasons">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="filters-bar sdr-filters-bar">
+                <div class="filters-left-group">
+                    <div class="search-input-wrapper">
+                        <span class="search-icon">🔍</span>
+                        <input type="text" id="sdr-global-search" placeholder="Buscar PO, estilo, talla, vendor...">
+                    </div>
+
+                    <select id="sdr-filter-season" class="filter-select">
+                        <option value="">Todas las Temporadas</option>
+                    </select>
+
+                    <select id="sdr-filter-delivery-group" class="filter-select">
+                        <option value="">Todos los Delivery Group</option>
+                    </select>
+
+                    <select id="sdr-filter-status" class="filter-select">
+                        <option value="">Todos los Status</option>
+                    </select>
+
+                    <button id="btn-reset-sdr-filters" class="btn-secondary" title="Restablecer filtros SDR">
+                        <span>Limpiar Filtros</span>
+                    </button>
+                </div>
+
+                <div class="filters-right-group">
+                    <div class="sdr-flow-chip">Vista independiente SDR</div>
+                </div>
+            </div>
+
+            <div class="table-panel-card">
+                <div id="sdr-grid-container">
+                    <!-- La tabla SDR se renderizará dinámicamente aquí -->
+                </div>
+            </div>
+        </section>
     </div>
 
     <!-- CARGAR LÓGICA DE APLICACIÓN -->
-    <script src="js/formulas.js?v=1.1.20"></script>
-    <script src="js/excelParser.js?v=1.1.20"></script>
-    <script src="js/distributionColumns.js?v=1.1.20"></script>
-    <script src="js/gridController.js?v=1.1.20"></script>
-    <script src="js/app.js?v=1.1.20"></script>
+    <script src="js/formulas.js?v=1.1.24"></script>
+    <script src="js/excelParser.js?v=1.1.24"></script>
+    <script src="js/distributionColumns.js?v=1.1.24"></script>
+    <script src="js/gridController.js?v=1.1.24"></script>
+    <script src="js/sdrTemplateData.js?v=1.1.24"></script>
+    <script src="js/sdrController.js?v=1.1.24"></script>
+    <script src="js/app.js?v=1.1.24"></script>
 </body>
 </html>
