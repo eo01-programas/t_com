@@ -7,28 +7,59 @@ document.addEventListener('DOMContentLoaded', () => {
     const grid = new window.GridController('grid-container', 'kpi-cards-container');
 
     // 2. Elementos DOM de interacción general
-    const fileInput = document.getElementById('excel-file-input');
+    const fileInputGlobal = document.getElementById('file-input-global');
+    const fileInputSdr = document.getElementById('file-input-sdr');
     const dragArea = document.getElementById('drag-drop-area');
     const loadingOverlay = document.getElementById('loading-overlay');
     const importView = document.getElementById('import-view');
     const dataView = document.getElementById('data-view');
+    const sdrView = document.getElementById('sdr-view');
     const menuView = document.getElementById('menu-view');
     const headerActions = document.querySelector('.header-actions');
+    const btnImportGlobal = document.getElementById('btn-import-global');
+    const btnImportSdr = document.getElementById('btn-import-sdr');
+    const importModeBadge = document.getElementById('import-mode-badge');
+    const importTitle = dragArea ? dragArea.querySelector('h3') : null;
+    const importDescription = dragArea ? dragArea.querySelector('p') : null;
+    const importSelectLabel = null;
     const menuOptFacturacion = document.getElementById('menu-opt-facturacion');
     const menuOptDistribucion = document.getElementById('menu-opt-distribucion');
+    const menuOptSeguimiento = document.getElementById('menu-opt-seguimiento');
     const menuOptStatus = document.getElementById('menu-opt-status');
     const searchInput = document.getElementById('global-search');
     const btnResetFilters = document.getElementById('btn-reset-filters');
     const btnExportExcel = document.getElementById('btn-export');
     const btnReimport = document.getElementById('btn-reimport');
     const btnBackMenu = document.getElementById('btn-back-menu');
-    const selectStatusHod = document.getElementById('filter-status-hod');
-    const statusHodHelp = document.getElementById('status-hod-help');
     const filterDistSeason = document.getElementById('filter-dist-season');
     const distCheckLll = document.getElementById('dist-check-lll');
     const distCheckExpo = document.getElementById('dist-check-expo');
     const distCheckPcp = document.getElementById('dist-check-pcp');
+
+    const sdrController = window.SdrController
+        ? new window.SdrController('sdr-grid-container', 'sdr-kpis-container')
+        : null;
+
+    // HOD filter (Excel-style panel)
+    const hodFilterWrap = document.getElementById('status-hod-filter-wrap');
+    const hodFilterToggleBtn = document.getElementById('btn-hod-filter-toggle');
+    const hodFilterLabel = document.getElementById('hod-filter-label');
+    const hodFilterPanel = document.getElementById('hod-filter-panel');
+    const hodMonthSelect = document.getElementById('hod-month-select');
+    const hodDateSearch = document.getElementById('hod-date-search');
+    const hodCheckAll = document.getElementById('hod-check-all');
+    const hodCheckList = document.getElementById('hod-check-list');
+    const btnHodAccept = document.getElementById('btn-hod-accept');
+    const btnHodClear = document.getElementById('btn-hod-clear');
+
     let exportInProgress = false;
+    let allHodOptions = [];
+    let importMode = 'global';
+
+    if (hodFilterToggleBtn) {
+        hodFilterToggleBtn.setAttribute('aria-expanded', 'false');
+        hodFilterToggleBtn.setAttribute('aria-controls', 'hod-filter-panel');
+    }
 
     const headerBackMenu = document.createElement('button');
     headerBackMenu.type = 'button';
@@ -43,13 +74,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectSeason = document.getElementById('filter-season');
     const selectStatus = document.getElementById('filter-status');
 
-    /**
-     * Muestra u oculta la pantalla de carga con texto descriptivo
-     */
     const toggleLoading = (show, message = 'Procesando archivo...') => {
         const textElement = loadingOverlay.querySelector('.loading-text');
         if (textElement) textElement.textContent = message;
-        
         if (show) {
             loadingOverlay.classList.add('active');
         } else {
@@ -57,9 +84,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    /**
-     * Actualiza el texto del botón de exportación según el módulo activo
-     */
     const updateExportButtonLabel = () => {
         const labelElement = btnExportExcel.querySelector('span');
         if (!labelElement) return;
@@ -68,79 +92,221 @@ document.addEventListener('DOMContentLoaded', () => {
             ? '📥 Exportar Excels'
             : grid.activeModule === 'status'
                 ? '📥 Exportar Status'
+            : grid.activeModule === 'seguimiento'
+                ? '📥 Exportar Seguimiento'
             : '📥 Exportar a Excel';
     };
 
-    const getSelectedStatusHodValues = () => {
-        if (!selectStatusHod) return [];
+    // ─── HOD Filter helpers ────────────────────────────────────────────────
 
-        return Array.from(selectStatusHod.selectedOptions || [])
-            .map((option) => option.value)
+    const syncImportModeUi = () => {
+        const isSdr = importMode === 'sdr';
+
+        if (btnImportGlobal) btnImportGlobal.classList.toggle('active', !isSdr);
+        if (btnImportSdr) btnImportSdr.classList.toggle('active', isSdr);
+        if (btnImportGlobal) btnImportGlobal.setAttribute('aria-pressed', (!isSdr).toString());
+        if (btnImportSdr) btnImportSdr.setAttribute('aria-pressed', isSdr.toString());
+        if (importModeBadge) {
+            importModeBadge.textContent = isSdr ? 'Modo activo: LLL SDR' : 'Modo activo: LLL Global';
+        }
+        if (importTitle) {
+            importTitle.textContent = isSdr ? 'Importa tu reporte SDR' : 'Importa tu reporte global';
+        }
+        if (importDescription) {
+            importDescription.innerHTML = isSdr
+                ? 'Haz clic en <strong>Importar LLL SDR</strong> para abrir el selector, o arrastra y suelta tu archivo <strong>LLL SDR</strong> aquí.'
+                : 'Haz clic en <strong>Importar LLL Global</strong> para abrir el selector, o arrastra y suelta tu archivo <strong>LLL Global Report.xlsx</strong> aquí.';
+        }
+    };
+
+    const openImportPicker = (mode) => {
+        importMode = mode === 'sdr' ? 'sdr' : 'global';
+        syncImportModeUi();
+        const activeInput = importMode === 'sdr' ? fileInputSdr : fileInputGlobal;
+        if (activeInput) {
+            activeInput.value = '';
+            activeInput.click();
+        }
+    };
+
+    const showInitialImportView = () => {
+        if (menuView) menuView.classList.add('hidden');
+        if (dataView) dataView.classList.add('hidden');
+        if (sdrView) sdrView.classList.add('hidden');
+        if (btnReimport) btnReimport.classList.add('hidden');
+        if (headerBackMenu) headerBackMenu.classList.add('hidden');
+        if (btnBackMenu) btnBackMenu.classList.add('hidden');
+        if (importView) importView.classList.remove('hidden');
+    };
+
+    const showGlobalFlow = () => {
+        if (sdrView) sdrView.classList.add('hidden');
+        if (importView) importView.classList.add('hidden');
+        if (menuView) menuView.classList.remove('hidden');
+        if (dataView) dataView.classList.add('hidden');
+        if (btnReimport) btnReimport.classList.remove('hidden');
+        syncModuleView();
+    };
+
+    const showSdrFlow = () => {
+        if (menuView) menuView.classList.add('hidden');
+        if (dataView) dataView.classList.add('hidden');
+        if (importView) importView.classList.add('hidden');
+        if (sdrView) sdrView.classList.remove('hidden');
+        if (btnReimport) btnReimport.classList.remove('hidden');
+        if (headerBackMenu) headerBackMenu.classList.add('hidden');
+        if (btnBackMenu) btnBackMenu.classList.add('hidden');
+    };
+
+    const updateHodFilterLabel = () => {
+        if (!hodFilterLabel) return;
+        const selected = getSelectedStatusHodValues();
+        if (selected.length === 0) {
+            hodFilterLabel.textContent = 'HOD: Todos';
+        } else if (selected.length === 1) {
+            const opt = allHodOptions.find((o) => o.value === selected[0]);
+            hodFilterLabel.textContent = `HOD: ${opt ? opt.label : selected[0]}`;
+        } else {
+            hodFilterLabel.textContent = `HOD: ${selected.length} seleccionados`;
+        }
+    };
+
+    const updateHodCheckAllState = () => {
+        if (!hodCheckAll || !hodCheckList) return;
+        const visible = Array.from(
+            hodCheckList.querySelectorAll('.hod-check-row:not(.hod-hidden) input[type="checkbox"]')
+        );
+        if (visible.length === 0) {
+            hodCheckAll.checked = false;
+            hodCheckAll.indeterminate = false;
+            return;
+        }
+        const allChecked = visible.every((cb) => cb.checked);
+        const someChecked = visible.some((cb) => cb.checked);
+        hodCheckAll.checked = allChecked;
+        hodCheckAll.indeterminate = someChecked && !allChecked;
+    };
+
+    const filterHodCheckList = () => {
+        if (!hodCheckList) return;
+        const monthValue = hodMonthSelect ? hodMonthSelect.value : '';
+        const searchValue = hodDateSearch ? hodDateSearch.value.toLowerCase().trim() : '';
+
+        hodCheckList.querySelectorAll('.hod-check-row').forEach((row) => {
+            const value = row.dataset.value || '';
+            const label = (row.dataset.label || '').toLowerCase();
+            const matchMonth = !monthValue || value.substring(0, 7) === monthValue;
+            const matchSearch = !searchValue || label.includes(searchValue);
+            row.classList.toggle('hod-hidden', !matchMonth || !matchSearch);
+        });
+
+        updateHodCheckAllState();
+    };
+
+    const getSelectedStatusHodValues = () => {
+        if (!hodCheckList) return [];
+        return Array.from(hodCheckList.querySelectorAll('input[type="checkbox"]:checked'))
+            .map((cb) => cb.value)
             .filter(Boolean);
     };
 
     const setSelectedStatusHodValues = (values = []) => {
-        if (!selectStatusHod) return;
-
-        const selectedValues = new Set(
+        if (!hodCheckList) return;
+        const selected = new Set(
             (Array.isArray(values) ? values : [values])
-                .map((value) => String(value || '').trim())
+                .map((v) => String(v || '').trim())
                 .filter(Boolean)
         );
-
-        Array.from(selectStatusHod.options).forEach((option) => {
-            option.selected = selectedValues.has(option.value);
+        hodCheckList.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+            cb.checked = selected.has(cb.value);
         });
-
-        if (selectedValues.size === 0) {
-            selectStatusHod.selectedIndex = -1;
-        }
+        updateHodCheckAllState();
+        updateHodFilterLabel();
     };
 
     const clearStatusHodSelection = () => {
-        if (!selectStatusHod) return;
-
-        Array.from(selectStatusHod.options).forEach((option) => {
-            option.selected = false;
+        if (!hodCheckList) return;
+        hodCheckList.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+            cb.checked = false;
         });
+        if (hodCheckAll) {
+            hodCheckAll.checked = false;
+            hodCheckAll.indeterminate = false;
+        }
+        updateHodFilterLabel();
+    };
 
-        selectStatusHod.selectedIndex = -1;
+    const closeHodPanel = () => {
+        if (hodFilterToggleBtn) hodFilterToggleBtn.setAttribute('aria-expanded', 'false');
+        if (hodFilterPanel) hodFilterPanel.classList.add('hidden');
+    };
+
+    const openHodPanel = () => {
+        if (hodFilterToggleBtn) hodFilterToggleBtn.setAttribute('aria-expanded', 'true');
+        if (hodFilterPanel) hodFilterPanel.classList.remove('hidden');
     };
 
     /**
      * Carga las fechas HOD disponibles para el filtro de Status.
      */
     const populateStatusHodFilter = () => {
-        if (!selectStatusHod) return;
+        if (!hodCheckList) return;
 
         const currentValues = new Set(
             Array.isArray(grid.filters.hodDates) && grid.filters.hodDates.length > 0
                 ? grid.filters.hodDates
                 : getSelectedStatusHodValues()
         );
-        const options = typeof grid.getStatusHodOptions === 'function'
+
+        allHodOptions = typeof grid.getStatusHodOptions === 'function'
             ? grid.getStatusHodOptions()
             : [];
 
-        if (options.length === 0) {
-            selectStatusHod.innerHTML = '';
-            selectStatusHod.disabled = true;
-            clearStatusHodSelection();
+        if (allHodOptions.length === 0) {
+            hodCheckList.innerHTML = '<div class="hod-empty">No hay fechas disponibles</div>';
+            if (hodMonthSelect) {
+                hodMonthSelect.innerHTML = '<option value="">Todos los meses</option>';
+            }
             grid.filters.hodDates = [];
             return;
         }
 
-        selectStatusHod.innerHTML = [
-            ...options.map((option) => `<option value="${option.value}">${option.label}</option>`)
-        ].join('');
+        // Populate month filter
+        if (hodMonthSelect) {
+            const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+                                'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+            const months = new Map();
+            allHodOptions.forEach((opt) => {
+                const parts = opt.value.split('-');
+                if (parts.length >= 2) {
+                    const key = `${parts[0]}-${parts[1]}`;
+                    if (!months.has(key)) {
+                        const monthIdx = parseInt(parts[1], 10) - 1;
+                        months.set(key, `${monthNames[monthIdx] || parts[1]} ${parts[0]}`);
+                    }
+                }
+            });
+            hodMonthSelect.innerHTML = '<option value="">Todos los meses</option>' +
+                [...months.entries()]
+                    .map(([k, v]) => `<option value="${k}">${v}</option>`)
+                    .join('');
+        }
 
-        const nextValues = options
-            .map((option) => option.value)
-            .filter((value) => currentValues.has(value));
+        // Populate checkbox list
+        hodCheckList.innerHTML = allHodOptions
+            .map((opt) => `
+                <label class="hod-check-row" data-value="${opt.value}" data-label="${opt.label}">
+                    <input type="checkbox" class="hod-checkbox" value="${opt.value}">
+                    <span>${opt.label}</span>
+                </label>`)
+            .join('');
 
+        // Restore previous selection
+        const nextValues = allHodOptions
+            .map((o) => o.value)
+            .filter((v) => currentValues.has(v));
         setSelectedStatusHodValues(nextValues);
         grid.filters.hodDates = nextValues;
-        selectStatusHod.disabled = false;
     };
 
     /**
@@ -154,43 +320,55 @@ document.addEventListener('DOMContentLoaded', () => {
             : [];
 
         filterDistSeason.innerHTML = options
-            .map(opt => `<option value="${opt.value}">${opt.label}</option>`)
+            .map((opt) => `<option value="${opt.value}">${opt.label}</option>`)
             .join('');
 
-        Array.from(filterDistSeason.options).forEach(opt => {
+        Array.from(filterDistSeason.options).forEach((opt) => {
             opt.selected = opt.value === 'produccion';
         });
     };
 
     /**
      * Sincroniza la visibilidad de la UI principal según el módulo activo.
-     * Distribución y Status dejan visible solo el botón de exportación en el bloque principal.
      */
     const syncModuleView = () => {
         const isCompactModule = grid.activeModule === 'distribucion';
-        const isStatusModule = grid.activeModule === 'status';
+        const isStatusModule = grid.activeModule === 'status' || grid.activeModule === 'seguimiento';
 
         dataView.classList.toggle('distribution-mode', isCompactModule);
         dataView.classList.toggle('status-mode', isStatusModule);
         btnBackMenu.classList.toggle('hidden', isCompactModule);
         headerBackMenu.classList.toggle('hidden', !isCompactModule);
-        if (selectStatusHod) {
-            selectStatusHod.classList.toggle('hidden', !isStatusModule);
+        const needsHodFilter = isStatusModule || grid.activeModule === 'seguimiento';
+        if (hodFilterWrap) {
+            hodFilterWrap.classList.toggle('hidden', !needsHodFilter);
         }
-        if (statusHodHelp) {
-            statusHodHelp.classList.toggle('hidden', !isStatusModule);
+        if (needsHodFilter) {
+            openHodPanel();
+        } else {
+            closeHodPanel();
         }
     };
 
-    /**
-     * Espera un ciclo de render antes de ejecutar una tarea pesada.
-     * Esto permite que el overlay de carga se pinte en pantalla.
-     */
     const waitForPaint = () => new Promise((resolve) => setTimeout(resolve, 75));
 
-    /**
-     * Habilita o deshabilita el estado visual de exportación.
-     */
+    const requestFileProcessing = async (file, mode = importMode) => {
+        if (!file) return;
+
+        if (fileInputGlobal) fileInputGlobal.value = '';
+        if (fileInputSdr) fileInputSdr.value = '';
+
+        const activeMode = mode === 'sdr' ? 'sdr' : 'global';
+        const modeLabel = activeMode === 'sdr' ? 'LLL SDR' : 'LLL Global';
+        const confirmationMessage = `¿Deseas procesar el archivo "${file.name}" como ${modeLabel}?`;
+
+        if (!window.confirm(confirmationMessage)) {
+            return;
+        }
+
+        await handleFile(file, activeMode);
+    };
+
     const setExportBusyState = (isBusy, message) => {
         exportInProgress = isBusy;
         btnExportExcel.disabled = isBusy;
@@ -198,9 +376,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnBackMenu.disabled = isBusy;
         if (btnReimport) btnReimport.disabled = isBusy;
         headerBackMenu.disabled = isBusy;
-        if (selectStatusHod) {
-            selectStatusHod.disabled = isBusy || selectStatusHod.options.length === 0;
-        }
+        if (hodFilterToggleBtn) hodFilterToggleBtn.disabled = isBusy;
 
         if (isBusy) {
             const labelElement = btnExportExcel.querySelector('span');
@@ -209,6 +385,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     ? '⏳ Generando Excels...'
                     : grid.activeModule === 'status'
                         ? '⏳ Generando Production Status...'
+                    : grid.activeModule === 'seguimiento'
+                        ? '⏳ Generando Seguimiento...'
                     : '⏳ Exportando...';
             }
             toggleLoading(true, message);
@@ -219,9 +397,6 @@ document.addEventListener('DOMContentLoaded', () => {
         updateExportButtonLabel();
     };
 
-    /**
-     * Ejecuta una exportación mostrando estado de carga.
-     */
     const runExportTask = async (message, action) => {
         if (exportInProgress) return;
 
@@ -238,9 +413,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    /**
-     * Abre un módulo mostrando primero una pantalla de carga visible.
-     */
     const openModuleView = async (moduleName) => {
         if (exportInProgress) return;
 
@@ -248,13 +420,15 @@ document.addEventListener('DOMContentLoaded', () => {
             ? 'Distribución'
             : moduleName === 'status'
                 ? 'Status'
+            : moduleName === 'seguimiento'
+                ? 'Seguimiento'
                 : 'Facturación';
 
         try {
             toggleLoading(true, `Cargando ${moduleLabel}...`);
             await waitForPaint();
 
-            if (moduleName === 'status') {
+            if (moduleName === 'status' || moduleName === 'seguimiento') {
                 populateStatusHodFilter();
             }
 
@@ -280,48 +454,60 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    /**
-     * Procesa el archivo Excel seleccionado
-     */
-    const handleFile = async (file) => {
+    const handleFile = async (file, mode = importMode) => {
         if (!file) return;
-        
-        // Verificar extensión
+
         const ext = file.name.split('.').pop().toLowerCase();
         if (ext !== 'xlsx' && ext !== 'xls') {
             alert('Por favor, selecciona un archivo Excel válido (.xlsx o .xls).');
             return;
         }
 
-        toggleLoading(true, 'Leyendo archivo Excel...');
+        const activeMode = mode === 'sdr' ? 'sdr' : 'global';
+        toggleLoading(true, activeMode === 'sdr' ? 'Leyendo archivo SDR...' : 'Leyendo archivo Excel...');
 
         const reader = new FileReader();
         reader.onload = async (e) => {
             try {
-                toggleLoading(true, 'Analizando estructura y aplicando filtros (Status: Producción)...');
                 const arrayBuffer = e.target.result;
-                
-                // Procesar reporte global con ExcelParser
-                const parsedRows = await window.ExcelParser.parseGlobalReport(arrayBuffer);
-                
-                if (parsedRows.length === 0) {
-                    throw new Error("No se encontraron registros de producción válidos para facturar en la hoja 'LLL GR.'.");
+
+                if (activeMode === 'sdr') {
+                    toggleLoading(true, 'Analizando archivo SDR...');
+
+                    if (!sdrController) {
+                        throw new Error('El flujo SDR no esta disponible en esta version.');
+                    }
+
+                    const parsedRows = await sdrController.loadFromWorkbook(arrayBuffer);
+
+                    if (parsedRows.length === 0) {
+                        throw new Error('No se encontraron registros validos en el archivo SDR.');
+                    }
+
+                    sdrController.setData(parsedRows, file.name);
+                    grid.data = [];
+                    grid.filteredData = [];
+                    showSdrFlow();
+                } else {
+                    toggleLoading(true, 'Analizando estructura y aplicando filtros (Status: Produccion)...');
+
+                    const parsedRows = await window.ExcelParser.parseGlobalReport(arrayBuffer);
+
+                    if (parsedRows.length === 0) {
+                        throw new Error("No se encontraron registros de produccion validos para facturar en la hoja 'LLL GR.'.");
+                    }
+
+                    toggleLoading(true, 'Renderizando la cuadricula y calculando formulas...');
+                    grid.setSourceArrayBuffer(arrayBuffer);
+                    populateStatusHodFilter();
+                    grid.setActiveModule('facturacion');
+                    updateExportButtonLabel();
+                    syncModuleView();
+                    grid.setData(parsedRows);
+
+                    showGlobalFlow();
                 }
 
-                // Cargar datos en la cuadrícula
-                toggleLoading(true, 'Renderizando la cuadrícula y calculando fórmulas...');
-                grid.setSourceArrayBuffer(arrayBuffer);
-                populateStatusHodFilter();
-                grid.setActiveModule('facturacion');
-                updateExportButtonLabel();
-                syncModuleView();
-                grid.setData(parsedRows);
-                
-                // Cambiar vistas a Menú Principal
-                importView.classList.add('hidden');
-                menuView.classList.remove('hidden');
-                if (btnReimport) btnReimport.classList.remove('hidden');
-                
             } catch (err) {
                 console.error(err);
                 alert(`Error al procesar el archivo Excel: \n${err.message}`);
@@ -338,45 +524,146 @@ document.addEventListener('DOMContentLoaded', () => {
         reader.readAsArrayBuffer(file);
     };
 
-    // --- Eventos de Carga de Archivo (Input / Drag & Drop) ---
-    fileInput.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) {
-            handleFile(e.target.files[0]);
+    // ─── HOD panel events ──────────────────────────────────────────────────
+
+    if (hodFilterToggleBtn) {
+        hodFilterToggleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (!hodFilterPanel) return;
+            if (hodFilterPanel.classList.contains('hidden')) {
+                openHodPanel();
+            } else {
+                closeHodPanel();
+            }
+        });
+    }
+
+    if (hodMonthSelect) {
+        hodMonthSelect.addEventListener('change', () => {
+            filterHodCheckList();
+        });
+    }
+
+    if (hodDateSearch) {
+        hodDateSearch.addEventListener('input', () => {
+            filterHodCheckList();
+        });
+    }
+
+    if (hodCheckAll) {
+        hodCheckAll.addEventListener('change', () => {
+            if (!hodCheckList) return;
+            const visible = hodCheckList.querySelectorAll(
+                '.hod-check-row:not(.hod-hidden) input[type="checkbox"]'
+            );
+            visible.forEach((cb) => { cb.checked = hodCheckAll.checked; });
+            updateHodCheckAllState();
+            updateHodFilterLabel();
+        });
+    }
+
+    if (hodCheckList) {
+        hodCheckList.addEventListener('change', (e) => {
+            if (e.target.type === 'checkbox') {
+                updateHodCheckAllState();
+                updateHodFilterLabel();
+            }
+        });
+    }
+
+    if (btnHodAccept) {
+        btnHodAccept.addEventListener('click', () => {
+            const selected = getSelectedStatusHodValues();
+            grid.filters.hodDates = selected;
+            grid.currentPage = 1;
+            grid.applyFilters();
+            closeHodPanel();
+        });
+    }
+
+    if (btnHodClear) {
+        btnHodClear.addEventListener('click', () => {
+            clearStatusHodSelection();
+            if (hodMonthSelect) hodMonthSelect.value = '';
+            if (hodDateSearch) hodDateSearch.value = '';
+            filterHodCheckList();
+        });
+    }
+
+    // Close panel when clicking outside
+    document.addEventListener('click', (e) => {
+        if (hodFilterWrap && !hodFilterWrap.contains(e.target)) {
+            closeHodPanel();
         }
     });
 
-    // Efectos visuales de drag & drop
-    dragArea.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dragArea.classList.add('dragover');
-    });
+    // ─── Eventos de Carga de Archivo ──────────────────────────────────────
 
-    dragArea.addEventListener('dragleave', () => {
-        dragArea.classList.remove('dragover');
-    });
+    if (fileInputGlobal) {
+        fileInputGlobal.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                requestFileProcessing(e.target.files[0], 'global');
+            }
+        });
+    }
 
-    dragArea.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dragArea.classList.remove('dragover');
-        if (e.dataTransfer.files.length > 0) {
-            handleFile(e.dataTransfer.files[0]);
-        }
-    });
+    if (fileInputSdr) {
+        fileInputSdr.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                requestFileProcessing(e.target.files[0], 'sdr');
+            }
+        });
+    }
 
-    // --- Controles de la Tabla (Búsqueda y Filtros) ---
+    if (btnImportGlobal) {
+        btnImportGlobal.addEventListener('click', () => {
+            openImportPicker('global');
+        });
+    }
 
-    // Búsqueda global (con debounce)
+    if (btnImportSdr) {
+        btnImportSdr.addEventListener('click', () => {
+            openImportPicker('sdr');
+        });
+    }
+
+    if (dragArea) {
+        dragArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dragArea.classList.add('dragover');
+        });
+
+        dragArea.addEventListener('dragleave', () => {
+            dragArea.classList.remove('dragover');
+        });
+
+        dragArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dragArea.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) {
+                requestFileProcessing(e.dataTransfer.files[0], importMode);
+            }
+        });
+
+        dragArea.addEventListener('click', (e) => {
+            if (e.target.tagName === 'INPUT') return;
+            const activeInput = importMode === 'sdr' ? fileInputSdr : fileInputGlobal;
+            if (activeInput) activeInput.click();
+        });
+    }
+
+    // ─── Controles de la Tabla ────────────────────────────────────────────
+
     let searchDebounceTimeout;
     searchInput.addEventListener('input', (e) => {
         clearTimeout(searchDebounceTimeout);
         searchDebounceTimeout = setTimeout(() => {
             grid.searchTerm = e.target.value;
-            grid.currentPage = 1; // Volver a la página 1
+            grid.currentPage = 1;
             grid.applyFilters();
         }, 300);
     });
 
-    // Filtros por columnas específicas
     selectVendor.addEventListener('change', (e) => {
         grid.filters.data1 = e.target.value;
         grid.currentPage = 1;
@@ -395,15 +682,6 @@ document.addEventListener('DOMContentLoaded', () => {
         grid.applyFilters();
     });
 
-    if (selectStatusHod) {
-        selectStatusHod.addEventListener('change', () => {
-            grid.filters.hodDates = getSelectedStatusHodValues();
-            grid.currentPage = 1;
-            grid.applyFilters();
-        });
-    }
-
-    // Restablecer todos los filtros
     btnResetFilters.addEventListener('click', () => {
         clearTimeout(searchDebounceTimeout);
         searchInput.value = '';
@@ -411,24 +689,28 @@ document.addEventListener('DOMContentLoaded', () => {
         selectSeason.value = '';
         selectStatus.value = '';
         clearStatusHodSelection();
-        
+        if (hodMonthSelect) hodMonthSelect.value = '';
+        if (hodDateSearch) hodDateSearch.value = '';
+        filterHodCheckList();
+
         grid.searchTerm = '';
         grid.filters.data1 = '';
         grid.filters.season = '';
         grid.filters.status = '';
         grid.filters.hodDates = [];
         grid.currentPage = 1;
-        
+
         grid.applyFilters();
     });
 
-    // --- Exportación y Reinicio ---
+    // ─── Exportación y Reinicio ───────────────────────────────────────────
+
     btnExportExcel.addEventListener('click', async () => {
         if (exportInProgress) return;
 
         if (grid.activeModule === 'distribucion') {
             const selectedStatuses = filterDistSeason
-                ? Array.from(filterDistSeason.selectedOptions).map(opt => opt.value).filter(Boolean)
+                ? Array.from(filterDistSeason.selectedOptions).map((opt) => opt.value).filter(Boolean)
                 : [];
             const selectedModules = [
                 distCheckLll && distCheckLll.checked ? 'LLL' : null,
@@ -463,78 +745,81 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        if (grid.activeModule === 'seguimiento') {
+            const selectedHodDates = getSelectedStatusHodValues();
+            grid.filters.hodDates = selectedHodDates;
+
+            await runExportTask('Generando Seguimiento...', () => {
+                grid.exportSeguimientoExcel({
+                    hodDates: selectedHodDates,
+                    season: grid.filters.season,
+                    vendor: grid.filters.data1,
+                    status: grid.filters.status
+                });
+            });
+            return;
+        }
+
         await runExportTask('Generando archivo(s) de Facturación...', () => {
             grid.exportToExcel();
         });
     });
 
-    /**
-     * Abre el menú principal y limpia el estado de módulo activo.
-     */
     const showMenuView = () => {
         grid.setActiveModule('facturacion');
         updateExportButtonLabel();
         syncModuleView();
         dataView.classList.add('hidden');
+        if (sdrView) sdrView.classList.add('hidden');
         menuView.classList.remove('hidden');
     };
 
-    // Navegación desde el menú a la cuadrícula de Facturación
-    menuOptFacturacion.addEventListener('click', () => {
-        openModuleView('facturacion');
-    });
+    menuOptFacturacion.addEventListener('click', () => { openModuleView('facturacion'); });
+    menuOptDistribucion.addEventListener('click', () => { openModuleView('distribucion'); });
+    if (menuOptSeguimiento) menuOptSeguimiento.addEventListener('click', () => { openModuleView('seguimiento'); });
+    menuOptStatus.addEventListener('click', () => { openModuleView('status'); });
 
-    // Navegación desde el menú a la cuadrícula de Distribución
-    menuOptDistribucion.addEventListener('click', () => {
-        openModuleView('distribucion');
-    });
-
-    // Navegación desde el menú a la pantalla de Status
-    menuOptStatus.addEventListener('click', () => {
-        openModuleView('status');
-    });
-
-    // Navegación de regreso desde la cuadrícula al menú de módulos
-    btnBackMenu.addEventListener('click', () => {
-        showMenuView();
-    });
-
-    headerBackMenu.addEventListener('click', () => {
-        showMenuView();
-    });
+    btnBackMenu.addEventListener('click', () => { showMenuView(); });
+    headerBackMenu.addEventListener('click', () => { showMenuView(); });
 
     if (btnReimport) {
         btnReimport.addEventListener('click', () => {
-            if (confirm('¿Deseas subir un nuevo archivo global? Se perderán los cambios no exportados.')) {
+            if (confirm('¿Deseas cargar un nuevo archivo? Se perderán los cambios no exportados.')) {
                 clearTimeout(searchDebounceTimeout);
-                fileInput.value = '';
+                if (fileInputGlobal) fileInputGlobal.value = '';
+                if (fileInputSdr) fileInputSdr.value = '';
                 searchInput.value = '';
                 selectVendor.value = '';
                 selectSeason.value = '';
                 selectStatus.value = '';
                 clearStatusHodSelection();
+                if (hodMonthSelect) hodMonthSelect.value = '';
+                if (hodDateSearch) hodDateSearch.value = '';
+                closeHodPanel();
 
                 grid.data = [];
                 grid.filteredData = [];
                 grid.searchTerm = '';
                 grid.filters = { data1: '', season: '', status: '', hodDates: [] };
                 grid.setSourceArrayBuffer(null);
-                if (selectStatusHod) {
-                    selectStatusHod.innerHTML = '';
-                    selectStatusHod.disabled = true;
+                if (sdrController) {
+                    sdrController.clear();
                 }
+                allHodOptions = [];
+                if (hodCheckList) hodCheckList.innerHTML = '';
+                if (hodMonthSelect) hodMonthSelect.innerHTML = '<option value="">Todos los meses</option>';
+
                 grid.setActiveModule('facturacion');
                 updateExportButtonLabel();
                 syncModuleView();
-
-                btnReimport.classList.add('hidden');
-                dataView.classList.add('hidden');
-                menuView.classList.add('hidden');
-                importView.classList.remove('hidden');
+                importMode = 'global';
+                syncImportModeUi();
+                showInitialImportView();
             }
         });
     }
 
+    syncImportModeUi();
     updateExportButtonLabel();
     syncModuleView();
     populateStatusHodFilter();
