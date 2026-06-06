@@ -1,9 +1,9 @@
 /**
  * Facturación LLL - Columnas exportables por módulo para Distribución.
- * Las columnas se derivan de la plantilla Lululemon 7.31.25.xlsx:
- * - fila 1: azul -> LLL
- * - fila 2: rosado -> EXPO
- * - fila 3: verde  -> PCP
+ * La plantilla visual se toma de LLL Global Report.xlsx y usa tres bloques de encabezado:
+ * - LLL WIP  -> encabezado azul
+ * - EXPO WIP -> encabezado rosado
+ * - PCP WIP  -> encabezado verde
  */
 
 (function (root) {
@@ -19,77 +19,108 @@
         return cols;
     };
 
+    const buildColumns = (ranges) => expandRanges(ranges).filter((col) => col > 2);
+
     const config = {
         LLL: {
             sheetName: 'LLL',
-            title: 'LLL WIP Updated',
-            filenamePrefix: 'LLL WIP Updated',
+            title: 'LLL WIP',
+            filenamePrefix: 'LLL WIP',
             suffix: 'LLL',
-            columns: expandRanges([
+            accentColor: '#4F8F62',
+            accentSoftColor: '#E6F2EA',
+            description: 'Encabezados azules del template',
+            columns: buildColumns([
                 [1, 14],
-                [16, 22],
-                [34, 34],
-                [39, 44],
-                [51, 54],
-                [58, 74],
-                [77, 80],
-                [82, 120],
-                [124, 124],
-                [126, 126],
-                [145, 145],
-                [148, 151],
-                [164, 167],
-                [171, 194],
-                [196, 232],
-                [236, 239],
-                [241, 254],
-                [256, 263],
-                [265, 265]
+                [17, 21],
+                [27, 27],
+                [29, 32],
+                [41, 45],
+                [48, 49],
+                [51, 59],
+                [60, 64],
+                [65, 97],
+                [101, 102],
+                [106, 106],
+                [121, 121],
+                [123, 123],
+                [126, 131],
+                [132, 132],
+                [139, 142],
+                [151, 153],
+                [155, 162],
+                [163, 176],
+                [177, 178],
+                [180, 185],
+                [186, 188],
+                [189, 196],
+                [197, 198],
+                [199, 200],
+                [201, 204],
+                [205, 208],
+                [209, 212],
+                [217, 220],
+                [222, 227],
+                [228, 230],
+                [231, 233],
+                [234, 236],
+                [238, 240],
+                [241, 242],
+                [245, 247],
+                [248, 249],
+                [251, 253],
+                [255, 255],
+                [270, 284]
             ])
         },
         EXPO: {
-            sheetName: 'Expo',
-            title: 'LLL WIP Updated Expo',
-            filenamePrefix: 'LLL WIP Updated',
-            suffix: 'Expo',
-            columns: expandRanges([
-                [1, 14],
-                [18, 22],
-                [34, 34],
-                [43, 44],
-                [50, 50],
-                [77, 80],
-                [82, 120],
-                [124, 124],
-                [126, 126],
-                [129, 131],
-                [147, 147],
-                [151, 151],
-                [156, 156],
-                [163, 181]
+            sheetName: 'EXPO',
+            title: 'EXPO WIP',
+            filenamePrefix: 'EXPO WIP',
+            suffix: 'EXPO',
+            accentColor: '#D97BAE',
+            accentSoftColor: '#F8E4EF',
+            description: 'Encabezados rosados del template',
+            columns: buildColumns([
+                [9, 9],
+                [19, 21],
+                [27, 27],
+                [61, 61],
+                [64, 64],
+                [94, 94],
+                [217, 219],
+                [228, 230],
+                [231, 233],
+                [234, 236],
+                [238, 242],
+                [245, 247],
+                [251, 254],
+                [256, 258]
             ])
         },
         PCP: {
             sheetName: 'PCP',
-            title: 'LLL WIP Updated PCP',
-            filenamePrefix: 'LLL WIP Updated',
+            title: 'PCP WIP',
+            filenamePrefix: 'PCP WIP',
             suffix: 'PCP',
-            columns: expandRanges([
-                [1, 14],
-                [16, 22],
-                [34, 34],
-                [51, 57],
-                [80, 80],
-                [82, 120],
-                [129, 142],
-                [145, 145],
-                [149, 153],
-                [156, 156],
-                [158, 159],
-                [161, 186],
-                [189, 194],
-                [196, 264],
-                [266, 268]
+            accentColor: '#7CB342',
+            accentSoftColor: '#E6F2D9',
+            description: 'Encabezados verdes del template',
+            columns: buildColumns([
+                [9, 9],
+                [19, 21],
+                [27, 27],
+                [61, 61],
+                [64, 64],
+                [94, 94],
+                [217, 219],
+                [228, 230],
+                [231, 233],
+                [234, 236],
+                [238, 242],
+                [245, 247],
+                [251, 254],
+                [256, 258]
             ])
         }
     };
