@@ -1,9 +1,9 @@
 /**
  * Facturación LLL - Columnas exportables por módulo para Distribución.
- * La plantilla visual se toma de LLL Global Report.xlsx y usa tres bloques de encabezado:
- * - LLL WIP  -> encabezado azul
- * - EXPO WIP -> encabezado rosado
- * - PCP WIP  -> encabezado verde
+ * Rangos verificados contra archivos de referencia:
+ * - LLL WIP  -> WIP LLL/LLL Wip Updated 6.5.26.xlsx  (202 cols, sin ocultas)
+ * - EXPO WIP -> WIP EXPO/LLL WIP Updated 6.3.26.xlsx (206 cols, con ocultas)
+ * - PCP WIP  -> WIP PCP/LLL WIP Updated 6.3.26.xlsx  (206 cols, con ocultas)
  */
 
 (function (root) {
@@ -19,8 +19,6 @@
         return cols;
     };
 
-    const buildColumns = (ranges) => expandRanges(ranges).filter((col) => col > 2);
-
     const config = {
         LLL: {
             sheetName: 'LLL',
@@ -30,44 +28,28 @@
             accentColor: '#4F8F62',
             accentSoftColor: '#E6F2EA',
             description: 'Encabezados azules del template',
-            columns: buildColumns([
+            // 202 columnas — incluye cols 1-2 (Conc), excluye col 254 (COFACO days before HOD)
+            columns: expandRanges([
                 [1, 14],
                 [17, 21],
                 [27, 27],
                 [29, 32],
                 [41, 45],
                 [48, 49],
-                [51, 59],
-                [60, 64],
-                [65, 97],
+                [51, 97],
                 [101, 102],
                 [106, 106],
                 [121, 121],
                 [123, 123],
-                [126, 131],
-                [132, 132],
+                [126, 132],
                 [139, 142],
                 [151, 153],
-                [155, 162],
-                [163, 176],
-                [177, 178],
-                [180, 185],
-                [186, 188],
-                [189, 196],
-                [197, 198],
-                [199, 200],
-                [201, 204],
-                [205, 208],
-                [209, 212],
+                [155, 178],
+                [180, 212],
                 [217, 220],
-                [222, 227],
-                [228, 230],
-                [231, 233],
-                [234, 236],
-                [238, 240],
-                [241, 242],
-                [245, 247],
-                [248, 249],
+                [222, 236],
+                [238, 242],
+                [245, 249],
                 [251, 253],
                 [255, 255],
                 [270, 284]
@@ -81,20 +63,23 @@
             accentColor: '#D97BAE',
             accentSoftColor: '#F8E4EF',
             description: 'Encabezados rosados del template',
-            columns: buildColumns([
-                [9, 9],
-                [19, 21],
+            // 206 columnas — mismo subconjunto que PCP, incluye cols ocultas de la referencia
+            columns: expandRanges([
+                [1, 14],
+                [17, 21],
                 [27, 27],
-                [61, 61],
-                [64, 64],
-                [94, 94],
-                [217, 219],
-                [228, 230],
-                [231, 233],
-                [234, 236],
-                [238, 242],
-                [245, 247],
-                [251, 254],
+                [41, 44],
+                [49, 49],
+                [51, 52],
+                [60, 97],
+                [108, 123],
+                [127, 133],
+                [135, 149],
+                [151, 167],
+                [170, 172],
+                [169, 169],
+                [175, 178],
+                [180, 254],
                 [256, 258]
             ])
         },
@@ -106,20 +91,23 @@
             accentColor: '#7CB342',
             accentSoftColor: '#E6F2D9',
             description: 'Encabezados verdes del template',
-            columns: buildColumns([
-                [9, 9],
-                [19, 21],
+            // 206 columnas — excluye cols internas del fuente (HOD-LLL, costos FOB, fechas intermedias)
+            columns: expandRanges([
+                [1, 14],
+                [17, 21],
                 [27, 27],
-                [61, 61],
-                [64, 64],
-                [94, 94],
-                [217, 219],
-                [228, 230],
-                [231, 233],
-                [234, 236],
-                [238, 242],
-                [245, 247],
-                [251, 254],
+                [41, 44],
+                [49, 49],
+                [51, 52],
+                [60, 97],
+                [108, 123],
+                [127, 133],
+                [135, 149],
+                [151, 167],
+                [170, 172],
+                [169, 169],
+                [175, 178],
+                [180, 254],
                 [256, 258]
             ])
         }
