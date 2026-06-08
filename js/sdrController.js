@@ -136,6 +136,15 @@ class SdrController {
         return lookup;
     }
 
+    getColorNameByCode(colorCode) {
+        const lookup = this.getColorLookup();
+        const normalizedCode = String(colorCode != null ? colorCode : '').trim();
+        if (!normalizedCode) return '';
+
+        const colorInfo = lookup.get(normalizedCode);
+        return colorInfo && colorInfo.colorName ? colorInfo.colorName : '';
+    }
+
     getExportTheme() {
         const borderColor = { rgb: 'C8D8BD' };
         const textColor = { rgb: '2F3B2F' };
@@ -205,6 +214,55 @@ class SdrController {
         } catch (err) {
             return { ...ws };
         }
+    }
+
+    buildFormulaMapWorksheet(workbook) {
+        if (!workbook || !Array.isArray(workbook.SheetNames)) {
+            return null;
+        }
+
+        const rows = [['Sheet', 'Cell', 'Formula', 'Value']];
+
+        workbook.SheetNames.forEach((sheetName) => {
+            const ws = workbook.Sheets ? workbook.Sheets[sheetName] : null;
+            if (!ws || !ws['!ref']) return;
+
+            const range = XLSX.utils.decode_range(ws['!ref']);
+            for (let r = range.s.r; r <= range.e.r; r += 1) {
+                for (let c = range.s.c; c <= range.e.c; c += 1) {
+                    const addr = XLSX.utils.encode_cell({ r, c });
+                    const cell = ws[addr];
+                    if (!cell || !cell.f) continue;
+
+                    const formulaText = String(cell.f || '').trim();
+                    rows.push([
+                        sheetName,
+                        addr,
+                        formulaText.startsWith('=') ? formulaText : `=${formulaText}`,
+                        cell.v != null ? cell.v : ''
+                    ]);
+                }
+            }
+        });
+
+        if (rows.length === 1) {
+            return null;
+        }
+
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        ws['!cols'] = [
+            { wch: 24 },
+            { wch: 12 },
+            { wch: 90 },
+            { wch: 22 }
+        ];
+        this.applySheetTheme(ws, {
+            headerRows: 1,
+            dataStartRow: 1,
+            freeze: { xSplit: 0, ySplit: 1 },
+            autoFilter: true
+        });
+        return ws;
     }
 
     applySheetTheme(ws, options = {}) {
@@ -943,7 +1001,6 @@ class SdrController {
 
     aggregatePivotGroups() {
         const fieldDefs = this.getPivotFieldDefs();
-        const colorLookup = this.getColorLookup();
         const sizeHeaders = this.getPivotSizeHeaders();
         const sizeSet = new Set(sizeHeaders.map((size) => this.normalizeText(size)));
         const currentGroups = new Map();
@@ -962,7 +1019,6 @@ class SdrController {
         };
 
         this.data.forEach((row) => {
-            const colorInfo = colorLookup.get(String(row.colorCode != null ? row.colorCode : '').trim()) || {};
             const rowValues = {
                 season: row.season != null ? row.season : '',
                 deliveryGroup: row.deliveryGroup != null ? row.deliveryGroup : '',
@@ -984,7 +1040,7 @@ class SdrController {
                 styleName: row.styleName != null ? row.styleName : '',
                 colorCode: row.colorCode != null ? row.colorCode : '',
                 colorDescription: row.colorDescription != null ? row.colorDescription : '',
-                colorName: colorInfo.colorName || String(row.colorDescription != null ? row.colorDescription : '').trim() || '',
+                colorName: this.getColorNameByCode(row.colorCode),
                 fob: row.fob != null ? row.fob : ''
             };
 
@@ -1109,7 +1165,7 @@ class SdrController {
         rowData.push([]);
         rowData.push([]);
         rowData.push(['Result', ...new Array(rowFields.length - 1).fill(''), 'Size']);
-        rowData.push([...rowFields, ...sizeHeaders, 'Total general', 'Total']);
+        rowData.push([...rowFields, ...sizeHeaders, 'Total general', 'Qty Shipped']);
 
         (Array.isArray(currentGroups) ? currentGroups : []).forEach((group) => {
             const row = fieldDefs.map((def) => group.values[def.key] != null ? group.values[def.key] : '');
@@ -1270,7 +1326,7 @@ class SdrController {
 
             const pivotShippedWs = this.buildPivotWorksheet({
                 title: 'Suma de Shipped Quantity',
-                measureLabel: 'Total general',
+                measureLabel: 'Qty Shipped',
                 groups: shippedGroups,
                 includeSizes: true
             });
@@ -1284,6 +1340,10 @@ class SdrController {
             XLSX.utils.book_append_sheet(wb, pivotCurrentWs, 'SDR - PIVOT');
             XLSX.utils.book_append_sheet(wb, pivotShippedWs, 'SDR Qty Shpd - PIVOT');
             XLSX.utils.book_append_sheet(wb, resultWs, 'Result');
+            const formulaMapWs = this.buildFormulaMapWorksheet(wb);
+            if (formulaMapWs) {
+                XLSX.utils.book_append_sheet(wb, formulaMapWs, 'Mapa de Formulas');
+            }
 
             wb.Props = { ...(wb.Props || {}), Title: 'LLL SDR WIP' };
 
@@ -1354,13 +1414,13 @@ class SdrController {
                 createDate: this.parseCellValue(getVal(mapping.createDate), 'date'),
                 deliveryGroup: this.parseCellValue(getVal(mapping.deliveryGroup)),
                 masterPoNumber: this.parseCellValue(getVal(mapping.masterPoNumber)),
-                poNumber: this.parseCellValue(getVal(mapping.poNumber)),
+                poNumber: this.parseCellValue(getVal(mapping.poNumber), 'number'),
                 channel: this.parseCellValue(getVal(mapping.channel)),
                 destination: this.parseCellValue(getVal(mapping.destination)),
                 route: this.parseCellValue(getVal(mapping.route)),
                 styleName: this.parseCellValue(getVal(mapping.styleName)),
                 style: this.parseCellValue(getVal(mapping.style)),
-                colorCode: this.parseCellValue(getVal(mapping.colorCode)),
+                colorCode: this.parseCellValue(getVal(mapping.colorCode), 'number'),
                 colorDescription: this.parseCellValue(getVal(mapping.colorDescription)),
                 size: this.parseCellValue(getVal(mapping.size)),
                 currentQuantity: this.parseCellValue(getVal(mapping.currentQuantity), 'number'),
