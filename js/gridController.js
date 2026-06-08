@@ -871,6 +871,58 @@ class GridController {
     }
 
     /**
+     * Genera una hoja visible con el mapeo de celdas que contienen formulas.
+     */
+    buildFormulaMapWorksheet(workbook) {
+        if (!workbook || !Array.isArray(workbook.SheetNames)) {
+            return null;
+        }
+
+        const rows = [['Sheet', 'Cell', 'Formula', 'Value']];
+
+        workbook.SheetNames.forEach((sheetName) => {
+            const ws = workbook.Sheets ? workbook.Sheets[sheetName] : null;
+            if (!ws || !ws['!ref']) return;
+
+            const range = XLSX.utils.decode_range(ws['!ref']);
+            for (let r = range.s.r; r <= range.e.r; r += 1) {
+                for (let c = range.s.c; c <= range.e.c; c += 1) {
+                    const addr = XLSX.utils.encode_cell({ r, c });
+                    const cell = ws[addr];
+                    if (!cell || !cell.f) continue;
+
+                    const formulaText = String(cell.f || '').trim();
+                    rows.push([
+                        sheetName,
+                        addr,
+                        formulaText.startsWith('=') ? formulaText : `=${formulaText}`,
+                        cell.v != null ? cell.v : ''
+                    ]);
+                }
+            }
+        });
+
+        if (rows.length === 1) {
+            return null;
+        }
+
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        ws['!cols'] = [
+            { wch: 24 },
+            { wch: 12 },
+            { wch: 90 },
+            { wch: 22 }
+        ];
+        this.applyExcelTheme(ws, {
+            headerRows: 1,
+            dataStartRow: 1,
+            freezeRows: 1,
+            zebra: true
+        });
+        return ws;
+    }
+
+    /**
      * Exporta la cuadrícula actual de vuelta a un archivo Excel (.xlsx) con fórmulas nativas vivas
      */
     exportToExcel() {
@@ -1078,20 +1130,28 @@ class GridController {
 
         XLSX.utils.book_append_sheet(wb, ws, "Facturacion Template");
 
-        // Hoja PIVOT — encabezados alineados con Template . Facturacion.xlsx hoja "PIVOT"
+        // Hoja adicional de validación con el detalle previo al agrupado mensual
         const pivotHeaders = [
-            'VENDOR',
-            'Order Shipment Status',
-            'MARKETING',
-            'Season',
-            'GAIN',
+            'Cliente',
+            'Vendor',
+            'Temporada',
+            'Reserva o Programa',
             'OP',
-            'Style Name',
-            'TELA (Facturación)',
-            'COF FOB BR',
-            'HOD LULULEMON',
-            'M a r g e n',
-            'Total'
+            'Estilo',
+            'Bordado',
+            'Estampado',
+            'Garment Dye',
+            'Tela',
+            'Cantidad',
+            'Precio FOB $',
+            'Total US$',
+            'Fecha de Despacho',
+            'Status',
+            'Semana',
+            'Mes',
+            'Año',
+            '% Margen',
+            'Total US$ Margen'
         ];
 
         const pivotData = [pivotHeaders];
@@ -1099,49 +1159,95 @@ class GridController {
         this.data.forEach((row) => {
             const priceHasValue = row.precio !== '' && row.precio !== null && row.precio !== undefined;
             const priceValue = Number(row.precio);
+            const totalUsValue = Number(row.totalUs) || 0;
             const marginValue = Number(row.year4) || 0;
             const dispatchSerial = row.fechaDespacho !== null && row.fechaDespacho !== undefined && row.fechaDespacho !== ''
                 ? dateToExcelSerial(row.fechaDespacho)
                 : null;
             const textValue = (value) => String(value || '').trim();
+            const pivotExcelRow = pivotData.length + 1;
 
             pivotData.push([
+                textValue(row.cliente),
                 textValue(row.vendorCalc) || textValue(row.data1),
-                textValue(row.data2),
-                textValue(row.data3),
                 textValue(row.season),
                 textValue(row.programa),
                 textValue(row.op),
                 textValue(row.estilo),
+                textValue(row.bordado),
+                textValue(row.estampado),
+                textValue(row.garmentDye),
                 textValue(row.tela),
+                {
+                    t: 'n',
+                    v: Number(row.cantidad) || 0,
+                    z: '#,##0'
+                },
                 priceHasValue && Number.isFinite(priceValue)
-                    ? { t: 'n', v: priceValue, z: '$#,##0.0000' }
+                    ? {
+                        t: 'n',
+                        v: priceValue,
+                        z: '$#,##0.0000'
+                    }
                     : '',
+                {
+                    t: 'n',
+                    v: totalUsValue,
+                    z: '$#,##0.00'
+                },
                 dispatchSerial !== null
-                    ? { t: 'n', v: dispatchSerial, z: 'd-mmm-yy' }
+                    ? {
+                        t: 'n',
+                        v: dispatchSerial,
+                        z: 'd-mmm-yy'
+                    }
                     : '',
-                { t: 'n', v: marginValue, z: '0.00%' },
-                { t: 'n', v: Number(row.cantidad) || 0, z: '#,##0' }
+                textValue(row.status),
+                {
+                    t: 'n',
+                    v: Number(row.wk) || 0,
+                    f: `WEEKNUM(N${pivotExcelRow})`,
+                    z: '0'
+                },
+                {
+                    t: 'str',
+                    v: textValue(row.month),
+                    f: `TEXT(N${pivotExcelRow},"MMMM")`
+                },
+                {
+                    t: 'str',
+                    v: textValue(row.year3),
+                    f: `TEXT(N${pivotExcelRow},"YYY")`
+                },
+                {
+                    t: 'n',
+                    v: marginValue,
+                    z: '0.00%'
+                },
+                {
+                    t: 'n',
+                    v: totalUsValue * marginValue,
+                    f: `M${pivotExcelRow}*S${pivotExcelRow}`,
+                    z: '$#,##0.00'
+                }
             ]);
         });
 
         const wsPivot = XLSX.utils.aoa_to_sheet(pivotData);
-        wsPivot['!cols'] = [
-            { wch: 22 },
-            { wch: 18 },
-            { wch: 17 },
-            { wch: 11 },
-            { wch: 12 },
-            { wch: 11 },
-            { wch: 35 },
-            { wch: 58 },
-            { wch: 14 },
-            { wch: 12 },
-            { wch: 12 },
-            { wch: 8  }
-        ];
+        wsPivot['!cols'] = pivotHeaders.map((header) => {
+            const headerText = String(header || '');
+            if (headerText === 'Cliente') return { wch: 24 };
+            if (headerText === 'Vendor') return { wch: 14 };
+            if (headerText === 'Temporada') return { wch: 16 };
+            if (headerText === 'Reserva o Programa') return { wch: 24 };
+            if (headerText === 'Estilo') return { wch: 22 };
+            if (headerText === 'Tela') return { wch: 28 };
+            if (headerText === 'Fecha de Despacho') return { wch: 16 };
+            if (headerText === 'Total US$ Margen') return { wch: 18 };
+            return { wch: 14 };
+        });
         this.applyExcelTheme(wsPivot);
-        XLSX.utils.book_append_sheet(wb, wsPivot, "PIVOT");
+        XLSX.utils.book_append_sheet(wb, wsPivot, "pivot");
         
         // ----------------------------------------------------
         // 2b. Construir la hoja "Plantilla Luis"
@@ -1366,6 +1472,10 @@ class GridController {
 
         // 3. Escribir y descargar un único archivo de Facturación
         wb.Props = { ...(wb.Props || {}), Title: 'Facturacion LLL' };
+        const formulaMapWs = this.buildFormulaMapWorksheet(wb);
+        if (formulaMapWs) {
+            XLSX.utils.book_append_sheet(wb, formulaMapWs, 'Mapa de Formulas');
+        }
         XLSX.writeFile(wb, 'Facturacion LLL.xlsx', { cellStyles: true });
     }
 
@@ -1553,6 +1663,10 @@ class GridController {
             });
 
             XLSX.utils.book_append_sheet(outWb, outWs, moduleConfig.sheetName);
+            const formulaMapWs = this.buildFormulaMapWorksheet(outWb);
+            if (formulaMapWs) {
+                XLSX.utils.book_append_sheet(outWb, formulaMapWs, 'Mapa de Formulas');
+            }
             outWb.Props = { ...(outWb.Props || {}), Title: moduleConfig.title };
 
             XLSX.writeFile(
@@ -2295,6 +2409,10 @@ class GridController {
         const detailWs = XLSX.utils.aoa_to_sheet(statusDetailData);
         detailWs['!cols'] = statusDetailHeaders.map(() => ({ wch: 18 }));
         XLSX.utils.book_append_sheet(wb, detailWs, detailSheetName);
+        const formulaMapWs = this.buildFormulaMapWorksheet(wb);
+        if (formulaMapWs) {
+            XLSX.utils.book_append_sheet(wb, formulaMapWs, 'Mapa de Formulas');
+        }
         wb.Workbook = wb.Workbook || {};
         wb.Workbook.Sheets = wb.SheetNames.map((name) => ({
             name,
@@ -2878,6 +2996,10 @@ class GridController {
         const detailWs = XLSX.utils.aoa_to_sheet(detailData);
         detailWs['!cols'] = detailHeaders.map(() => ({ wch: 18 }));
         XLSX.utils.book_append_sheet(wb, detailWs, detailSheetName);
+        const formulaMapWs = this.buildFormulaMapWorksheet(wb);
+        if (formulaMapWs) {
+            XLSX.utils.book_append_sheet(wb, formulaMapWs, 'Mapa de Formulas');
+        }
         wb.Workbook = wb.Workbook || {};
         wb.Workbook.Sheets = wb.SheetNames.map((name) => ({
             name,
