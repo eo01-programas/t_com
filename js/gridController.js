@@ -232,10 +232,10 @@ class GridController {
             // 4. Filtro STATUS
             if (this.filters.status && row.status !== this.filters.status) return false;
 
-            // 5. Filtro HOD solo en el módulo de Status
-            if (this.activeModule === 'status' && Array.isArray(this.filters.hodDates) && this.filters.hodDates.length > 0) {
-                if (!this.filters.hodDates.includes(String(row.fechaDespacho || '').trim())) return false;
-            }
+            // 5. El filtro HOD del módulo Status ahora corresponde a "Orig PO Handover" y su
+            //    función es acotar la EXPORTACIÓN (ver getStatusHodOptions / exportStatusExcel).
+            //    La cuadrícula en pantalla es la vista agregada de Facturación (fechaDespacho),
+            //    cuya fecha no equivale a Orig PO Handover, por lo que aquí no se filtra.
 
             return true;
         });
@@ -868,6 +868,47 @@ class GridController {
 
         ws['!rows'] = rows;
         ws['!freeze'] = { xSplit: 0, ySplit: freezeRows };
+    }
+
+    clearBodyFills(ws, headerRows = 1) {
+        if (!ws || !ws['!ref']) return;
+
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        for (let r = range.s.r + headerRows; r <= range.e.r; r += 1) {
+            for (let c = range.s.c; c <= range.e.c; c += 1) {
+                const addr = XLSX.utils.encode_cell({ r, c });
+                const cell = ws[addr];
+                if (cell && cell.s && cell.s.fill) {
+                    delete cell.s.fill;
+                }
+            }
+        }
+    }
+
+    keepOnlyFormulaByHeader(ws, headerText) {
+        if (!ws || !ws['!ref']) return;
+
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        const targetColumns = new Set();
+        const normalizedTarget = this.normalizeText(headerText);
+
+        for (let c = range.s.c; c <= range.e.c; c += 1) {
+            const addr = XLSX.utils.encode_cell({ r: range.s.r, c });
+            const cell = ws[addr];
+            if (this.normalizeText(cell ? cell.v : '') === normalizedTarget) {
+                targetColumns.add(c);
+            }
+        }
+
+        for (let r = range.s.r + 1; r <= range.e.r; r += 1) {
+            for (let c = range.s.c; c <= range.e.c; c += 1) {
+                const addr = XLSX.utils.encode_cell({ r, c });
+                const cell = ws[addr];
+                if (cell && cell.f !== undefined && !targetColumns.has(c)) {
+                    delete cell.f;
+                }
+            }
+        }
     }
 
     /**
@@ -1742,7 +1783,9 @@ class GridController {
                 continue;
             }
 
-            const hodValue = getSourceCellValue(sourceRow, 'HOD\nLULULEMON');
+            // El filtro HOD del Status corresponde a "Orig PO Handover" (col AC),
+            // que es la fecha que el usuario selecciona para exportar y la que va en "HOD LLL".
+            const hodValue = getSourceCellValue(sourceRow, 'Orig PO Handover');
             const hodSerial = this.dateToExcelSerial(hodValue);
             if (hodSerial === null) {
                 continue;
@@ -1801,8 +1844,88 @@ class GridController {
             return String(value).trim();
         };
 
+        const parseStatusDateToUtc = (dateValue) => {
+            if (!dateValue && dateValue !== 0) return null;
+
+            if (dateValue instanceof Date) {
+                if (isNaN(dateValue.getTime())) return null;
+                return new Date(Date.UTC(
+                    dateValue.getUTCFullYear(),
+                    dateValue.getUTCMonth(),
+                    dateValue.getUTCDate()
+                ));
+            }
+
+            if (typeof dateValue === 'number') {
+                const epoch = Date.UTC(1899, 11, 30);
+                return new Date(epoch + Math.round(dateValue) * 24 * 60 * 60 * 1000);
+            }
+
+            if (typeof dateValue === 'string') {
+                const trimmed = dateValue.trim();
+                if (!trimmed) return null;
+
+                // El global usa fechas MM/DD/YY para este flujo.
+                const mdYMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+                if (mdYMatch) {
+                    const month = parseInt(mdYMatch[1], 10) - 1;
+                    const day = parseInt(mdYMatch[2], 10);
+                    let year = parseInt(mdYMatch[3], 10);
+
+                    if (year < 100) {
+                        year += 2000;
+                    }
+
+                    if (Number.isFinite(month) && Number.isFinite(day) && Number.isFinite(year)) {
+                        return new Date(Date.UTC(year, month, day));
+                    }
+                }
+
+                const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                if (isoMatch) {
+                    const year = parseInt(isoMatch[1], 10);
+                    const month = parseInt(isoMatch[2], 10) - 1;
+                    const day = parseInt(isoMatch[3], 10);
+
+                    if (Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)) {
+                        return new Date(Date.UTC(year, month, day));
+                    }
+                }
+
+                const parsed = new Date(trimmed);
+                if (!isNaN(parsed.getTime())) {
+                    return new Date(Date.UTC(
+                        parsed.getUTCFullYear(),
+                        parsed.getUTCMonth(),
+                        parsed.getUTCDate()
+                    ));
+                }
+            }
+
+            return null;
+        };
+
+        const statusDateToExcelSerial = (dateValue) => {
+            const parsedDate = parseStatusDateToUtc(dateValue);
+            if (!parsedDate) return null;
+
+            const epoch = Date.UTC(1899, 11, 30);
+            const diffMs = parsedDate.getTime() - epoch;
+            return diffMs / (24 * 60 * 60 * 1000);
+        };
+
+        const statusDateToIsoDate = (dateValue) => {
+            const parsedDate = parseStatusDateToUtc(dateValue);
+            if (!parsedDate) return '';
+
+            const yyyy = parsedDate.getUTCFullYear();
+            const mm = String(parsedDate.getUTCMonth() + 1).padStart(2, '0');
+            const dd = String(parsedDate.getUTCDate()).padStart(2, '0');
+            return `${yyyy}-${mm}-${dd}`;
+        };
+
         const makeDateCell = (value) => {
-            const serial = this.dateToExcelSerial(value);
+            const serial = statusDateToExcelSerial(value);
             if (serial === null) return '';
             return {
                 t: 'n',
@@ -1834,7 +1957,12 @@ class GridController {
         const makeFormulaDateCell = (formula, value) => ({
             t: 'n',
             v: value === null || value === undefined ? '' : value,
-            f: formula,
+            // MINIFS/MAXIFS solo existen en Excel 2019/365 (en versiones previas dan #¿NOMBRE?).
+            // Se traducen a AGGREGATE (Excel 2010+, "AGREGAR" en espanol): la opcion 6 ignora
+            // los #DIV/0! de las filas que no cumplen el criterio -> min/max condicional compatible.
+            f: String(formula)
+                .replace(/MINIFS\(([^,()]+),([^,()]+),([^,()]+)\)/g, 'AGGREGATE(15,6,$1/(($2=$3)*($1<>"")),1)')
+                .replace(/MAXIFS\(([^,()]+),([^,()]+),([^,()]+)\)/g, 'AGGREGATE(14,6,$1/(($2=$3)*($1<>"")),1)'),
             z: 'd-mmm-yy'
         });
 
@@ -1910,6 +2038,53 @@ class GridController {
             return total;
         };
 
+        const collectNormalizedSewingLines = (valuesArray) => {
+            const uniqueLines = [];
+            const seen = new Set();
+
+            for (const rawValue of valuesArray) {
+                const rawText = textValue(rawValue);
+                if (!rawText) continue;
+
+                const segments = rawText.split(/\s*(?:\/|\|)\s*/);
+                for (const segmentRaw of segments) {
+                    const segment = String(segmentRaw).replace(/\s+/g, ' ').trim();
+                    if (!segment) continue;
+
+                    const numbers = [];
+                    const numberRegex = /\d+/g;
+                    let match = null;
+                    let lastIndex = -1;
+                    let lastLength = 0;
+                    while ((match = numberRegex.exec(segment)) !== null) {
+                        numbers.push(match[0]);
+                        lastIndex = match.index;
+                        lastLength = match[0].length;
+                    }
+
+                    if (numbers.length === 0) continue;
+
+                    const suffix = segment
+                        .slice(lastIndex + lastLength)
+                        .replace(/^[\s\-–—:,.]+/, '')
+                        .replace(/\s+/g, ' ')
+                        .trim()
+                        .toUpperCase();
+
+                    for (const numberText of numbers) {
+                        const lineNumber = String(parseInt(numberText, 10));
+                        const normalized = suffix ? `${lineNumber} ${suffix}` : lineNumber;
+                        if (!seen.has(normalized)) {
+                            seen.add(normalized);
+                            uniqueLines.push(normalized);
+                        }
+                    }
+                }
+            }
+
+            return uniqueLines;
+        };
+
         const sourceWorkbook = XLSX.read(new Uint8Array(this.sourceArrayBuffer), {
             type: 'array',
             cellStyles: true,
@@ -1970,7 +2145,7 @@ class GridController {
             return cell.v;
         };
 
-        const getDateSerial = (sourceRow, ...aliases) => this.dateToExcelSerial(getSourceCellValue(sourceRow, ...aliases));
+        const getDateSerial = (sourceRow, ...aliases) => statusDateToExcelSerial(getSourceCellValue(sourceRow, ...aliases));
 
         const getDelayText = (sourceRow) => {
             const values = [
@@ -1997,7 +2172,7 @@ class GridController {
         };
 
         const statusDetailHeaders = [
-            'HOD',
+            'HOD LLL',            // A = Orig PO Handover (llave de agrupacion)
             'TOTAL',
             'DYE Start',
             'DYE End',
@@ -2020,7 +2195,9 @@ class GridController {
             'INSPECTION %',
             'Sewing Line Count',
             'Sewing Line',
-            'Comments'
+            'Comments',
+            'HOD LULULEMON',      // Y = fecha actual del handover (para auditar la nueva HOD)
+            'Delayed Qty'         // Z = TOTAL PO Qty si HOD LULULEMON > Orig PO Handover, si no 0
         ];
 
         const statusHeaders = [
@@ -2054,6 +2231,7 @@ class GridController {
             'Plnd Start Date (FINISHING)',
             'Plnd End Date (FINISHING)',
             '# of lines',
+            'lines',
             'Completed units',
             '%',
             'Planned Finishing for balance',
@@ -2100,8 +2278,10 @@ class GridController {
                 continue;
             }
 
-            const hodValue = getSourceCellValue(sourceRow, 'HOD\nLULULEMON');
-            const hodIso = this.dateToIsoDate(hodValue);
+            // HOD LLL se toma de "Orig PO Handover" (col AC): es la llave de agrupacion
+            // y el valor que se muestra en el encabezado "HOD LLL" del Status.
+            const hodValue = getSourceCellValue(sourceRow, 'Orig PO Handover');
+            const hodIso = statusDateToIsoDate(hodValue);
             if (selectedHodSet.size > 0 && !selectedHodSet.has(hodIso)) {
                 continue;
             }
@@ -2109,9 +2289,15 @@ class GridController {
                 continue;
             }
 
-            const hodSerial = getDateSerial(sourceRow, 'HOD\nLULULEMON');
+            const hodSerial = getDateSerial(sourceRow, 'Orig PO Handover');
+            // HOD LULULEMON (col AE): fecha actual del handover. Si es POSTERIOR a la
+            // Orig PO Handover del grupo, su volumen se cuenta como "Further Delay".
+            const hodLululemonSerial = getDateSerial(sourceRow, 'HOD\nLULULEMON');
             const totalQty = numberValue(getSourceCellValue(sourceRow, 'TOTAL PO Qty', 'TOTAL Qty to Ship')) || 0;
-            const dyePercent = numberValue(getSourceCellValue(sourceRow, '% Recvd DYE/FINISH')) || 0;
+            const isFurtherDelay = hodSerial !== null && hodLululemonSerial !== null && hodLululemonSerial > hodSerial;
+            const delayedQty = isFurtherDelay ? totalQty : 0;
+            const fabricStartSerial = getDateSerial(sourceRow, 'Fabric Start\nBODY');
+            const dyePercent = numberValue(getSourceCellValue(sourceRow, '% Recvd DYE/FINISH'));
             const cutPercent = numberValue(getSourceCellValue(sourceRow, 'Cutting %')) || 0;
             const sewPercent = numberValue(getSourceCellValue(sourceRow, '% sew')) || 0;
             const finishPercent = numberValue(getSourceCellValue(sourceRow, '% finish')) || 0;
@@ -2145,12 +2331,22 @@ class GridController {
                     hodIso,
                     hodSerial,
                     totalQty: 0,
+                    furtherDelayQty: 0,
+                    delayFabricStartMin: null,
+                    delayFabricEndMax: null,
+                    delayCutStartMin: null,
+                    delayCutEndMax: null,
+                    delaySewStartMin: null,
+                    delaySewEndMax: null,
+                    delayPackStartMin: null,
+                    delayPackEndMax: null,
                     rowCount: 0,
                     dyePercentSum: 0,
                     cutPercentSum: 0,
                     sewPercentSum: 0,
                     finishPercentSum: 0,
                     inspectionPercentSum: 0,
+                    dyePercentCount: 0,
                     dyeStartSerial: null,
                     dyeEndSerial: null,
                     fabricPlannedSerial: null,
@@ -2173,8 +2369,26 @@ class GridController {
             const bucket = packageMap.get(hodIso);
             bucket.hodSerial = bucket.hodSerial === null || bucket.hodSerial === undefined ? hodSerial : bucket.hodSerial;
             bucket.totalQty += totalQty;
+            bucket.furtherDelayQty += delayedQty;
+            if (isFurtherDelay) {
+                // Fechas de proceso SOLO de las filas retrasadas (las que suman el Further Delay).
+                // "Planned X" = MIN del campo Start ; "Actual X" = MAX del campo End.
+                // Se ignoran seriales <= 0 (celda con 0 = "sin fecha", no una fecha real de 1899).
+                const realDate = (s) => (typeof s === 'number' && s > 0) ? s : null;
+                bucket.delayFabricStartMin = takeEarliestDate(bucket.delayFabricStartMin, realDate(fabricStartSerial));
+                bucket.delayFabricEndMax   = takeLatestDate(bucket.delayFabricEndMax, realDate(fabricActualSerial));
+                bucket.delayCutStartMin    = takeEarliestDate(bucket.delayCutStartMin, realDate(cutStartSerial));
+                bucket.delayCutEndMax      = takeLatestDate(bucket.delayCutEndMax, realDate(cutEndSerial));
+                bucket.delaySewStartMin    = takeEarliestDate(bucket.delaySewStartMin, realDate(sewStartSerial));
+                bucket.delaySewEndMax      = takeLatestDate(bucket.delaySewEndMax, realDate(sewEndSerial));
+                bucket.delayPackStartMin   = takeEarliestDate(bucket.delayPackStartMin, realDate(finishStartSerial));
+                bucket.delayPackEndMax     = takeLatestDate(bucket.delayPackEndMax, realDate(finishEndSerial));
+            }
             bucket.rowCount += 1;
-            bucket.dyePercentSum += dyePercent;
+            if (dyePercent !== null) {
+                bucket.dyePercentSum += dyePercent;
+                bucket.dyePercentCount += 1;
+            }
             bucket.cutPercentSum += cutPercent;
             bucket.sewPercentSum += sewPercent;
             bucket.finishPercentSum += finishPercent;
@@ -2200,7 +2414,7 @@ class GridController {
                 totalQty,
                 dyeStartSerial,
                 dyeEndSerial,
-                dyePercent,
+                dyePercent !== null ? dyePercent : '',
                 fabricPlannedSerial,
                 fabricActualSerial,
                 cutStartSerial,
@@ -2219,7 +2433,9 @@ class GridController {
                 inspectionPercent,
                 parseSewingLineCount(textValue(getSourceCellValue(sourceRow, 'Sewing LINE'))),
                 textValue(getSourceCellValue(sourceRow, 'Sewing LINE')),
-                getCommentsText(sourceRow)
+                getCommentsText(sourceRow),
+                hodLululemonSerial !== null ? hodLululemonSerial : '',
+                delayedQty
             ]);
         }
 
@@ -2236,29 +2452,24 @@ class GridController {
         const statusData = [statusHeaders];
 
         for (const bucket of packageRows) {
-            const avgDyePercent = bucket.rowCount > 0 ? bucket.dyePercentSum / bucket.rowCount : 0;
+            const avgDyePercent = bucket.dyePercentCount > 0 ? bucket.dyePercentSum / bucket.dyePercentCount : 0;
             const avgCutPercent = bucket.rowCount > 0 ? bucket.cutPercentSum / bucket.rowCount : 0;
             const avgSewPercent = bucket.rowCount > 0 ? bucket.sewPercentSum / bucket.rowCount : 0;
             const avgFinishPercent = bucket.rowCount > 0 ? bucket.finishPercentSum / bucket.rowCount : 0;
             const avgInspectionPercent = bucket.rowCount > 0 ? bucket.inspectionPercentSum / bucket.rowCount : 0;
-            const inspectionReferenceSerial = (() => {
-                const candidates = [bucket.inspectionActualSerial, bucket.inspectionPlannedSerial]
-                    .filter((value) => value !== null && value !== undefined);
-
-                if (candidates.length === 0) {
-                    return null;
-                }
-
-                return Math.max(...candidates);
-            })();
+            // Lineas atomicas normalizadas por HOD.
+            const uniqueSewingLines = collectNormalizedSewingLines(bucket.sewingLines);
             const excelRow = statusData.length + 1;
             const hodRef = `$A${excelRow}`;
+            const dyePercentFormula = `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('E')},"<>")=0,0,AVERAGEIFS(${detailRange('E')},${detailRange('A')},${hodRef}))`;
 
             statusData.push([
                 makeDateCell(bucket.hodSerial),
                 makeFormulaNumberCell(`SUMIFS(${detailRange('B')},${detailRange('A')},${hodRef})`, bucket.totalQty),
-                '',
-                '',
+                // Further Delay = suma de TOTAL PO Qty cuyas HOD LULULEMON superan la Orig PO Handover del grupo
+                makeFormulaNumberCell(`SUMIFS(${detailRange('Z')},${detailRange('A')},${hodRef})`, bucket.furtherDelayQty),
+                // New Total = TOTAL - Further Delay
+                makeFormulaNumberCell(`$B${excelRow}-$C${excelRow}`, bucket.totalQty - bucket.furtherDelayQty),
                 makeFormulaDateCell(
                     `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('C')},"<>")=0,"",MINIFS(${detailRange('C')},${detailRange('A')},${hodRef}))`,
                     bucket.dyeStartSerial
@@ -2268,15 +2479,11 @@ class GridController {
                     bucket.dyeEndSerial
                 ),
                 makeFormulaNumberCell(`ROUND($B${excelRow}*$H${excelRow},0)`, Math.round(bucket.totalQty * avgDyePercent)),
-                makeFormulaPercentCell(`AVERAGEIFS(${detailRange('E')},${detailRange('A')},${hodRef})`, avgDyePercent),
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('F')},"<>")=0,"",MAXIFS(${detailRange('F')},${detailRange('A')},${hodRef}))`,
-                    bucket.fabricPlannedSerial
-                ),
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('G')},"<>")=0,"",MAXIFS(${detailRange('G')},${detailRange('A')},${hodRef}))`,
-                    bucket.fabricActualSerial
-                ),
+                makeFormulaPercentCell(dyePercentFormula, avgDyePercent),
+                // Planned Fabric = MIN de "Fabric Start BODY" solo en las filas del Further Delay
+                makeDateCell(bucket.delayFabricStartMin),
+                // Actual Fabric = MAX de "Fabric End BODY" solo en las filas del Further Delay
+                makeDateCell(bucket.delayFabricEndMax),
                 makeFormulaNumberCell(
                     `IF(OR($A${excelRow}="",F${excelRow}=""),"", $A${excelRow}-F${excelRow})`,
                     bucket.hodSerial !== null && bucket.dyeEndSerial !== null ? Math.round(bucket.hodSerial - bucket.dyeEndSerial) : null
@@ -2291,14 +2498,10 @@ class GridController {
                 ),
                 makeFormulaNumberCell(`ROUND($B${excelRow}*$O${excelRow},0)`, Math.round(bucket.totalQty * avgCutPercent)),
                 makeFormulaPercentCell(`AVERAGEIFS(${detailRange('K')},${detailRange('A')},${hodRef})`, avgCutPercent),
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('J')},"<>")=0,"",MAXIFS(${detailRange('J')},${detailRange('A')},${hodRef}))`,
-                    bucket.cutPlannedSerial
-                ),
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('I')},"<>")=0,"",MAXIFS(${detailRange('I')},${detailRange('A')},${hodRef}))`,
-                    bucket.cutEndSerial
-                ),
+                // Planned Cut = MIN de "Cutting Start" solo en las filas del Further Delay
+                makeDateCell(bucket.delayCutStartMin),
+                // Actual Cut = MAX de "Cutting End" solo en las filas del Further Delay
+                makeDateCell(bucket.delayCutEndMax),
                 makeFormulaNumberCell(
                     `IF(OR($A${excelRow}="",M${excelRow}=""),"", $A${excelRow}-M${excelRow})`,
                     bucket.hodSerial !== null && bucket.cutEndSerial !== null ? Math.round(bucket.hodSerial - bucket.cutEndSerial) : null
@@ -2311,21 +2514,18 @@ class GridController {
                     `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('M')},"<>")=0,"",MAXIFS(${detailRange('M')},${detailRange('A')},${hodRef}))`,
                     bucket.sewEndSerial
                 ),
-                makeFormulaNumberCell(
-                    `SUMIFS(${detailRange('V')},${detailRange('A')},${hodRef})`,
-                    bucket.sewingLines.filter(textValue).reduce((s, v) => s + parseSewingLineCount(v), 0)
-                ),
-                [...new Set(bucket.sewingLines.map(textValue).filter(Boolean))].join(' | '),
+                {
+                    t: 'n',
+                    v: uniqueSewingLines.length,
+                    z: '#,##0'
+                },
+                uniqueSewingLines.join(' | '),
                 makeFormulaNumberCell(`ROUND($B${excelRow}*$X${excelRow},0)`, Math.round(bucket.totalQty * avgSewPercent)),
                 makeFormulaPercentCell(`AVERAGEIFS(${detailRange('O')},${detailRange('A')},${hodRef})`, avgSewPercent),
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('N')},"<>")=0,"",MAXIFS(${detailRange('N')},${detailRange('A')},${hodRef}))`,
-                    bucket.sewPlannedSerial
-                ),
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('M')},"<>")=0,"",MAXIFS(${detailRange('M')},${detailRange('A')},${hodRef}))`,
-                    bucket.sewEndSerial
-                ),
+                // Planned Sewing = MIN de "Sewing Start" solo en las filas del Further Delay
+                makeDateCell(bucket.delaySewStartMin),
+                // Actual Sewing = MAX de "Sewing End" solo en las filas del Further Delay
+                makeDateCell(bucket.delaySewEndMax),
                 makeFormulaNumberCell(
                     `IF(OR($A${excelRow}="",T${excelRow}=""),"", $A${excelRow}-T${excelRow})`,
                     bucket.hodSerial !== null && bucket.sewEndSerial !== null ? Math.round(bucket.hodSerial - bucket.sewEndSerial) : null
@@ -2338,20 +2538,18 @@ class GridController {
                     `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('Q')},"<>")=0,"",MAXIFS(${detailRange('Q')},${detailRange('A')},${hodRef}))`,
                     bucket.finishEndSerial
                 ),
-                makeFormulaNumberCell(
-                    `SUMIFS(${detailRange('V')},${detailRange('A')},${hodRef})`,
-                    bucket.sewingLines.filter(textValue).reduce((s, v) => s + parseSewingLineCount(v), 0)
-                ),
-                makeFormulaNumberCell(`ROUND($B${excelRow}*$AF${excelRow},0)`, Math.round(bucket.totalQty * avgFinishPercent)),
+                {
+                    t: 'n',
+                    v: uniqueSewingLines.length,
+                    z: '#,##0'
+                },
+                uniqueSewingLines.join(' | '),
+                makeFormulaNumberCell(`ROUND($B${excelRow}*$AG${excelRow},0)`, Math.round(bucket.totalQty * avgFinishPercent)),
                 makeFormulaPercentCell(`AVERAGEIFS(${detailRange('R')},${detailRange('A')},${hodRef})`, avgFinishPercent),
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('Q')},"<>")=0,"",MAXIFS(${detailRange('Q')},${detailRange('A')},${hodRef}))`,
-                    bucket.finishEndSerial
-                ),
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('Q')},"<>")=0,"",MAXIFS(${detailRange('Q')},${detailRange('A')},${hodRef}))`,
-                    bucket.finishEndSerial
-                ),
+                // Planned Finishing = MIN de "Packaging Start" solo en las filas del Further Delay
+                makeDateCell(bucket.delayPackStartMin),
+                // Actual Finishing = MAX de "Packaging End" solo en las filas del Further Delay
+                makeDateCell(bucket.delayPackEndMax),
                 makeFormulaNumberCell(
                     `IF(OR($A${excelRow}="",AC${excelRow}=""),"", $A${excelRow}-AC${excelRow})`,
                     bucket.hodSerial !== null && bucket.finishEndSerial !== null ? Math.round(bucket.hodSerial - bucket.finishEndSerial) : null
@@ -2360,15 +2558,14 @@ class GridController {
                     `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('S')},"<>")=0,"",MAXIFS(${detailRange('S')},${detailRange('A')},${hodRef}))`,
                     bucket.inspectionPlannedSerial
                 ),
-                makeFormulaNumberCell(`ROUND($B${excelRow}*$AL${excelRow},0)`, Math.round(bucket.totalQty * avgInspectionPercent)),
+                makeFormulaNumberCell(`ROUND($B${excelRow}*$AM${excelRow},0)`, Math.round(bucket.totalQty * avgInspectionPercent)),
                 makeFormulaPercentCell(`AVERAGEIFS(${detailRange('U')},${detailRange('A')},${hodRef})`, avgInspectionPercent),
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('T')},"<>")=0,"",MAXIFS(${detailRange('T')},${detailRange('A')},${hodRef}))`,
-                    bucket.inspectionActualSerial
-                ),
+                '',
                 makeFormulaNumberCell(
-                    `IF(COUNTA(AJ${excelRow},AM${excelRow})=0,"",$A${excelRow}-MAX(AJ${excelRow},AM${excelRow}))`,
-                    bucket.hodSerial !== null && inspectionReferenceSerial !== null ? Math.round(bucket.hodSerial - inspectionReferenceSerial) : null
+                    `IF(COUNTA(AK${excelRow},AN${excelRow})=0,"",$A${excelRow}-MAX(AK${excelRow},AN${excelRow}))`,
+                    bucket.hodSerial !== null && bucket.inspectionPlannedSerial !== null
+                        ? Math.round(bucket.hodSerial - bucket.inspectionPlannedSerial)
+                        : null
                 ),
                 ''
             ]);
@@ -2381,43 +2578,19 @@ class GridController {
 
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.aoa_to_sheet(statusData);
-        ws['!cols'] = statusHeaders.map((header) => {
-            const headerText = String(header || '');
-            if (headerText.includes('Comments')) {
-                return { wch: 60 };
-            }
-            if (headerText.includes('Further Delay')) {
-                return { wch: 34 };
-            }
-            if (headerText === '# of lines') {
-                return { wch: 12 };
-            }
-            if (headerText === 'lines') {
-                return { wch: 38 };
-            }
-            if (headerText === '%') {
-                return { wch: 10 };
-            }
-            if (headerText.includes('days before HOD')) {
-                return { wch: 18 };
-            }
-            return { wch: 18 };
-        });
-        this.applyExcelTheme(ws);
 
+        this.keepOnlyFormulaByHeader(ws, 'days before HOD that done the last FRI');
+        ws['!cols'] = statusHeaders.map(() => ({ wch: 18 }));
+        this.applyExcelTheme(ws);
+        this.clearBodyFills(ws);
+
+        // Alto de la fila de encabezado = 45 pt (se fija despues del tema, que usa 24 por defecto).
+        if (!ws['!rows']) ws['!rows'] = [];
+        if (!ws['!rows'][0]) ws['!rows'][0] = {};
+        ws['!rows'][0].hpt = 45;
+
+        // El archivo exporta una sola hoja: sin "Status Base" ni "Mapa de Formulas".
         XLSX.utils.book_append_sheet(wb, ws, 'Production Status');
-        const detailWs = XLSX.utils.aoa_to_sheet(statusDetailData);
-        detailWs['!cols'] = statusDetailHeaders.map(() => ({ wch: 18 }));
-        XLSX.utils.book_append_sheet(wb, detailWs, detailSheetName);
-        const formulaMapWs = this.buildFormulaMapWorksheet(wb);
-        if (formulaMapWs) {
-            XLSX.utils.book_append_sheet(wb, formulaMapWs, 'Mapa de Formulas');
-        }
-        wb.Workbook = wb.Workbook || {};
-        wb.Workbook.Sheets = wb.SheetNames.map((name) => ({
-            name,
-            Hidden: name === detailSheetName ? 1 : 0
-        }));
         wb.Props = { ...(wb.Props || {}), Title: 'Production Status' };
         XLSX.writeFile(wb, 'Production Status.xlsx', { cellStyles: true });
     }
@@ -2444,7 +2617,7 @@ class GridController {
         const selectedSeason = String(exportOptions.season || this.filters.season || '').trim();
         const selectedStatus = String(exportOptions.status || this.filters.status || '').trim();
 
-        const numberValue = (value) => {
+                const numberValue = (value) => {
             if (value === null || value === undefined || value === '') return null;
             if (typeof value === 'number') return Number.isFinite(value) ? value : null;
             const parsed = Number(String(value).replace(/,/g, '').trim());
@@ -2454,6 +2627,108 @@ class GridController {
         const textValue = (value) => {
             if (value === null || value === undefined) return '';
             return String(value).trim();
+        };
+
+        const parseStatusDateToUtc = (dateValue) => {
+            if (!dateValue && dateValue !== 0) return null;
+
+            if (dateValue instanceof Date) {
+                if (isNaN(dateValue.getTime())) return null;
+                return new Date(Date.UTC(
+                    dateValue.getUTCFullYear(),
+                    dateValue.getUTCMonth(),
+                    dateValue.getUTCDate()
+                ));
+            }
+
+            if (typeof dateValue === 'number') {
+                const epoch = Date.UTC(1899, 11, 30);
+                return new Date(epoch + Math.round(dateValue) * 24 * 60 * 60 * 1000);
+            }
+
+            if (typeof dateValue === 'string') {
+                const trimmed = dateValue.trim();
+                if (!trimmed) return null;
+
+                // El global usa fechas MM/DD/YY para este flujo.
+                const mdYMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+                if (mdYMatch) {
+                    const month = parseInt(mdYMatch[1], 10) - 1;
+                    const day = parseInt(mdYMatch[2], 10);
+                    let year = parseInt(mdYMatch[3], 10);
+
+                    if (year < 100) {
+                        year += 2000;
+                    }
+
+                    if (Number.isFinite(month) && Number.isFinite(day) && Number.isFinite(year)) {
+                        return new Date(Date.UTC(year, month, day));
+                    }
+                }
+
+                const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                if (isoMatch) {
+                    const year = parseInt(isoMatch[1], 10);
+                    const month = parseInt(isoMatch[2], 10) - 1;
+                    const day = parseInt(isoMatch[3], 10);
+
+                    if (Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)) {
+                        return new Date(Date.UTC(year, month, day));
+                    }
+                }
+
+                const parsed = new Date(trimmed);
+                if (!isNaN(parsed.getTime())) {
+                    return new Date(Date.UTC(
+                        parsed.getUTCFullYear(),
+                        parsed.getUTCMonth(),
+                        parsed.getUTCDate()
+                    ));
+                }
+            }
+
+            return null;
+        };
+
+        const statusDateToExcelSerial = (dateValue) => {
+            const parsedDate = parseStatusDateToUtc(dateValue);
+            if (!parsedDate) return null;
+
+            const epoch = Date.UTC(1899, 11, 30);
+            const diffMs = parsedDate.getTime() - epoch;
+            return diffMs / (24 * 60 * 60 * 1000);
+        };
+
+        const statusDateToIsoDate = (dateValue) => {
+            const parsedDate = parseStatusDateToUtc(dateValue);
+            if (!parsedDate) return '';
+
+            const yyyy = parsedDate.getUTCFullYear();
+            const mm = String(parsedDate.getUTCMonth() + 1).padStart(2, '0');
+            const dd = String(parsedDate.getUTCDate()).padStart(2, '0');
+            return `${yyyy}-${mm}-${dd}`;
+        };
+
+        const getSourceCellValueByLetter = (sourceRow, columnLetter) => {
+            const cell = sourceWs[XLSX.utils.encode_cell({
+                r: sourceRow,
+                c: XLSX.utils.decode_col(columnLetter)
+            })];
+
+            if (!cell || cell.v === undefined || cell.v === null) return '';
+            return cell.v;
+        };
+
+        const getCommentsText = (sourceRow) => {
+            const values = [
+                getSourceCellValueByLetter(sourceRow, 'BX'),
+                getSourceCellValueByLetter(sourceRow, 'GJ'),
+                getSourceCellValueByLetter(sourceRow, 'GM')
+            ]
+                .map(textValue)
+                .filter(Boolean);
+
+            return values.length > 0 ? values.join(' | ') : '';
         };
 
         // Acumula los valores de un array en formato "Valor1(n) + Valor2(m)"
@@ -2469,7 +2744,7 @@ class GridController {
         };
 
         const makeDateCell = (value) => {
-            const serial = this.dateToExcelSerial(value);
+            const serial = statusDateToExcelSerial(value);
             if (serial === null) return '';
             return { t: 'n', v: serial, z: 'd-mmm-yy' };
         };
@@ -2477,7 +2752,12 @@ class GridController {
         const makeFormulaDateCell = (formula, value) => ({
             t: 'n',
             v: value === null || value === undefined ? '' : value,
-            f: formula,
+            // MINIFS/MAXIFS solo existen en Excel 2019/365 (en versiones previas dan #¿NOMBRE?).
+            // Se traducen a AGGREGATE (Excel 2010+, "AGREGAR" en espanol): la opcion 6 ignora
+            // los #DIV/0! de las filas que no cumplen el criterio -> min/max condicional compatible.
+            f: String(formula)
+                .replace(/MINIFS\(([^,()]+),([^,()]+),([^,()]+)\)/g, 'AGGREGATE(15,6,$1/(($2=$3)*($1<>"")),1)')
+                .replace(/MAXIFS\(([^,()]+),([^,()]+),([^,()]+)\)/g, 'AGGREGATE(14,6,$1/(($2=$3)*($1<>"")),1)'),
             z: 'd-mmm-yy'
         });
 
@@ -2528,6 +2808,53 @@ class GridController {
             return total;
         };
 
+        const collectNormalizedSewingLines = (valuesArray) => {
+            const uniqueLines = [];
+            const seen = new Set();
+
+            for (const rawValue of valuesArray) {
+                const rawText = textValue(rawValue);
+                if (!rawText) continue;
+
+                const segments = rawText.split(/\s*(?:\/|\|)\s*/);
+                for (const segmentRaw of segments) {
+                    const segment = String(segmentRaw).replace(/\s+/g, ' ').trim();
+                    if (!segment) continue;
+
+                    const numbers = [];
+                    const numberRegex = /\d+/g;
+                    let match = null;
+                    let lastIndex = -1;
+                    let lastLength = 0;
+                    while ((match = numberRegex.exec(segment)) !== null) {
+                        numbers.push(match[0]);
+                        lastIndex = match.index;
+                        lastLength = match[0].length;
+                    }
+
+                    if (numbers.length === 0) continue;
+
+                    const suffix = segment
+                        .slice(lastIndex + lastLength)
+                        .replace(/^[\s\-–—:,.]+/, '')
+                        .replace(/\s+/g, ' ')
+                        .trim()
+                        .toUpperCase();
+
+                    for (const numberText of numbers) {
+                        const lineNumber = String(parseInt(numberText, 10));
+                        const normalized = suffix ? `${lineNumber} ${suffix}` : lineNumber;
+                        if (!seen.has(normalized)) {
+                            seen.add(normalized);
+                            uniqueLines.push(normalized);
+                        }
+                    }
+                }
+            }
+
+            return uniqueLines;
+        };
+
         const sourceWorkbook = XLSX.read(new Uint8Array(this.sourceArrayBuffer), {
             type: 'array', cellStyles: true, cellFormula: true,
             cellNF: true, cellText: false, cellDates: true
@@ -2569,7 +2896,7 @@ class GridController {
         };
 
         const getDateSerial = (sourceRow, ...aliases) =>
-            this.dateToExcelSerial(getSourceCellValue(sourceRow, ...aliases));
+            statusDateToExcelSerial(getSourceCellValue(sourceRow, ...aliases));
 
         // ── Cabeceras del detalle (mismas que Status) ──────────────────────
         const detailHeaders = [
@@ -2580,13 +2907,16 @@ class GridController {
             'SEW Start', 'SEW End', 'SEW Planned', 'SEW %',
             'FINISH Start', 'FINISH End', 'FINISH %',
             'INSPECTION Planned', 'INSPECTION Actual', 'INSPECTION %',
-            'Sewing Line Count', 'Sewing Line'
+            'Sewing Line Count', 'Sewing Line',
+            'Comments',
+            'HOD LULULEMON',
+            'Delayed Qty'
         ];
 
         // ── Cabeceras de la hoja principal Seguimiento ─────────────────────
         // Columnas A-B: HOD + TOTAL
         // Columnas C-I: 7 nuevas columnas de seguimiento
-        // Columnas J-AV: mismas que Status (desplazadas 7)
+        // Columnas J-AW: mismas que Status (desplazadas 7)
         const seguimientoHeaders = [
             'HOD\nLLL',                                             // A
             'TOTAL',                                                // B
@@ -2625,17 +2955,18 @@ class GridController {
             'Plnd Start Date (FINISHING)',                          // AI
             'Plnd End Date (FINISHING)',                            // AJ
             '# of lines',                                          // AK
-            'Completed units',                                      // AL
-            '%',                                                    // AM
-            'Planned Finishing for balance',                        // AN
-            'Actual Finishing Completion',                          // AO
-            'days before HOD that ends the finish',                // AP
-            'Plnd End Date (INSPECTION)',                           // AQ
-            'Completed units',                                      // AR
-            '%',                                                    // AS
-            'Actual Final Inspection',                              // AT
-            'days before HOD that done the last FRI',              // AU
-            'Comments (Please always include sub\'n date for pending TOP /PP/Pilot samples, shortage)' // AV
+            'lines',                                               // AL
+            'Completed units',                                      // AM
+            '%',                                                    // AN
+            'Planned Finishing for balance',                        // AO
+            'Actual Finishing Completion',                          // AP
+            'days before HOD that ends the finish',                // AQ
+            'Plnd End Date (INSPECTION)',                           // AR
+            'Completed units',                                      // AS
+            '%',                                                    // AT
+            'Actual Final Inspection',                              // AU
+            'days before HOD that done the last FRI',              // AV
+            'Comments (Please always include sub\'n date for pending TOP /PP/Pilot samples, shortage)' // AW
         ];
 
         const packageMap = new Map();
@@ -2659,13 +2990,18 @@ class GridController {
             const sourceVendor = textValue(getSourceCellValue(sourceRow, 'VENDOR'));
             if (selectedVendor && this.normalizeText(sourceVendor) !== this.normalizeText(selectedVendor)) continue;
 
-            const hodValue = getSourceCellValue(sourceRow, 'HOD\nLULULEMON');
-            const hodIso = this.dateToIsoDate(hodValue);
+            const hodValue = getSourceCellValue(sourceRow, 'Orig PO Handover');
+            const hodIso = statusDateToIsoDate(hodValue);
             if (selectedHodSet.size > 0 && !selectedHodSet.has(hodIso)) continue;
             if (!hodIso) continue;
 
-            const hodSerial      = getDateSerial(sourceRow, 'HOD\nLULULEMON');
+            const hodSerial      = getDateSerial(sourceRow, 'Orig PO Handover');
+            const hodLululemonSerial = getDateSerial(sourceRow, 'HOD\nLULULEMON');
+            const isFurtherDelay = hodSerial !== null && hodLululemonSerial !== null && hodLululemonSerial > hodSerial;
             const totalQty       = numberValue(getSourceCellValue(sourceRow, 'TOTAL PO Qty', 'TOTAL Qty to Ship')) || 0;
+            const delayedQty     = isFurtherDelay ? totalQty : 0;
+            const fabricStartSerial = getDateSerial(sourceRow, 'Fabric Start\nBODY');
+
             const dyePercent     = numberValue(getSourceCellValue(sourceRow, '% Recvd DYE/FINISH')) || 0;
             const cutPercent     = numberValue(getSourceCellValue(sourceRow, 'Cutting %')) || 0;
             const sewPercent     = numberValue(getSourceCellValue(sourceRow, '% sew')) || 0;
@@ -2704,6 +3040,15 @@ class GridController {
                 packageMap.set(hodIso, {
                     hodIso, hodSerial,
                     totalQty: 0, rowCount: 0,
+                    furtherDelayQty: 0,
+                    delayFabricStartMin: null,
+                    delayFabricEndMax: null,
+                    delayCutStartMin: null,
+                    delayCutEndMax: null,
+                    delaySewStartMin: null,
+                    delaySewEndMax: null,
+                    delayPackStartMin: null,
+                    delayPackEndMax: null,
                     dyePercentSum: 0, cutPercentSum: 0, sewPercentSum: 0,
                     finishPercentSum: 0, inspectionPercentSum: 0,
                     dyeStartSerial: null, dyeEndSerial: null,
@@ -2721,6 +3066,7 @@ class GridController {
             const bucket = packageMap.get(hodIso);
             bucket.hodSerial = bucket.hodSerial === null || bucket.hodSerial === undefined ? hodSerial : bucket.hodSerial;
             bucket.totalQty            += totalQty;
+            bucket.furtherDelayQty     += delayedQty;
             bucket.rowCount            += 1;
             bucket.dyePercentSum       += dyePercent;
             bucket.cutPercentSum       += cutPercent;
@@ -2743,6 +3089,18 @@ class GridController {
             bucket.inspectionActualSerial  = takeLatestDate(bucket.inspectionActualSerial, inspectionActualSerial);
             bucket.sewingLines.push(textValue(getSourceCellValue(sourceRow, 'Sewing LINE')));
 
+            if (isFurtherDelay) {
+                const realDate = (s) => (typeof s === 'number' && s > 0) ? s : null;
+                bucket.delayFabricStartMin = takeEarliestDate(bucket.delayFabricStartMin, realDate(fabricStartSerial));
+                bucket.delayFabricEndMax   = takeLatestDate(bucket.delayFabricEndMax, realDate(fabricActualSerial));
+                bucket.delayCutStartMin    = takeEarliestDate(bucket.delayCutStartMin, realDate(cutStartSerial));
+                bucket.delayCutEndMax      = takeLatestDate(bucket.delayCutEndMax, realDate(cutEndSerial));
+                bucket.delaySewStartMin    = takeEarliestDate(bucket.delaySewStartMin, realDate(sewStartSerial));
+                bucket.delaySewEndMax      = takeLatestDate(bucket.delaySewEndMax, realDate(sewEndSerial));
+                bucket.delayPackStartMin   = takeEarliestDate(bucket.delayPackStartMin, realDate(finishStartSerial));
+                bucket.delayPackEndMax     = takeLatestDate(bucket.delayPackEndMax, realDate(finishEndSerial));
+            }
+
             bucket.bulkFabricStatuses.push(bulkFabricStatus);
             bucket.garmentTestStatuses.push(garmentTestStatus);
             bucket.gbTestStatuses.push(gbTestStatus);
@@ -2760,7 +3118,10 @@ class GridController {
                 finishStartSerial, finishEndSerial, finishPercent,
                 inspectionPlannedSerial, inspectionActualSerial, inspectionPercent,
                 parseSewingLineCount(textValue(getSourceCellValue(sourceRow, 'Sewing LINE'))),
-                textValue(getSourceCellValue(sourceRow, 'Sewing LINE'))
+                textValue(getSourceCellValue(sourceRow, 'Sewing LINE')),
+                getCommentsText(sourceRow),
+                hodLululemonSerial !== null ? hodLululemonSerial : '',
+                delayedQty
             ]);
         }
 
@@ -2782,12 +3143,8 @@ class GridController {
             const avgSew        = bucket.rowCount > 0 ? bucket.sewPercentSum        / bucket.rowCount : 0;
             const avgFinish     = bucket.rowCount > 0 ? bucket.finishPercentSum     / bucket.rowCount : 0;
             const avgInspection = bucket.rowCount > 0 ? bucket.inspectionPercentSum / bucket.rowCount : 0;
-
-            const inspRefSerial = (() => {
-                const c = [bucket.inspectionActualSerial, bucket.inspectionPlannedSerial]
-                    .filter((v) => v !== null && v !== undefined);
-                return c.length === 0 ? null : Math.max(...c);
-            })();
+            // Lineas atomicas normalizadas por HOD.
+            const uniqueSewingLines = collectNormalizedSewingLines(bucket.sewingLines);
 
             const excelRow = seguimientoData.length + 1;
             const hodRef   = `$A${excelRow}`;
@@ -2808,9 +3165,9 @@ class GridController {
                 aggregateCounts(bucket.ppApprovedValues),
 
                 // J: Further Delay
-                '',
+                makeFormulaNumberCell(`SUMIFS(${detailRange('Z')},${detailRange('A')},${hodRef})`, bucket.furtherDelayQty),
                 // K: New Total
-                '',
+                makeFormulaNumberCell(`$B${excelRow}-$J${excelRow}`, bucket.totalQty - bucket.furtherDelayQty),
 
                 // L: DYE Start
                 makeFormulaDateCell(
@@ -2826,16 +3183,10 @@ class GridController {
                 makeFormulaNumberCell(`ROUND($B${excelRow}*$O${excelRow},0)`, Math.round(bucket.totalQty * avgDye)),
                 // O: DYE %
                 makeFormulaPercentCell(`AVERAGEIFS(${detailRange('E')},${detailRange('A')},${hodRef})`, avgDye),
-                // P: Fabric Planned
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('F')},"<>")=0,"",MAXIFS(${detailRange('F')},${detailRange('A')},${hodRef}))`,
-                    bucket.fabricPlannedSerial
-                ),
-                // Q: Fabric Actual
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('G')},"<>")=0,"",MAXIFS(${detailRange('G')},${detailRange('A')},${hodRef}))`,
-                    bucket.fabricActualSerial
-                ),
+                // P: Planned Fabric Completion for balance
+                makeDateCell(bucket.delayFabricStartMin),
+                // Q: Actual Fabric Completion
+                makeDateCell(bucket.delayFabricEndMax),
                 // R: days before HOD fabric  (A − M)
                 makeFormulaNumberCell(
                     `IF(OR($A${excelRow}="",M${excelRow}=""),"", $A${excelRow}-M${excelRow})`,
@@ -2856,16 +3207,10 @@ class GridController {
                 makeFormulaNumberCell(`ROUND($B${excelRow}*$V${excelRow},0)`, Math.round(bucket.totalQty * avgCut)),
                 // V: CUT %
                 makeFormulaPercentCell(`AVERAGEIFS(${detailRange('K')},${detailRange('A')},${hodRef})`, avgCut),
-                // W: Cut Planned
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('J')},"<>")=0,"",MAXIFS(${detailRange('J')},${detailRange('A')},${hodRef}))`,
-                    bucket.cutPlannedSerial
-                ),
-                // X: Cut Actual
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('I')},"<>")=0,"",MAXIFS(${detailRange('I')},${detailRange('A')},${hodRef}))`,
-                    bucket.cutEndSerial
-                ),
+                // W: Planned Cut Completion for balance
+                makeDateCell(bucket.delayCutStartMin),
+                // X: Actual Cut Completion
+                makeDateCell(bucket.delayCutEndMax),
                 // Y: days before HOD cut  (A − T)
                 makeFormulaNumberCell(
                     `IF(OR($A${excelRow}="",T${excelRow}=""),"", $A${excelRow}-T${excelRow})`,
@@ -2883,26 +3228,21 @@ class GridController {
                     bucket.sewEndSerial
                 ),
                 // AB: SEW # lines
-                makeFormulaNumberCell(
-                    `SUMIFS(${detailRange('V')},${detailRange('A')},${hodRef})`,
-                    bucket.sewingLines.filter(textValue).reduce((s, v) => s + parseSewingLineCount(v), 0)
-                ),
+                {
+                    t: 'n',
+                    v: uniqueSewingLines.length,
+                    z: '#,##0'
+                },
                 // AC: SEW lines (literal)
-                [...new Set(bucket.sewingLines.map(textValue).filter(Boolean))].join(' | '),
+                uniqueSewingLines.join(' | '),
                 // AD: SEW Completed  (B × AE%)
                 makeFormulaNumberCell(`ROUND($B${excelRow}*$AE${excelRow},0)`, Math.round(bucket.totalQty * avgSew)),
                 // AE: SEW %
                 makeFormulaPercentCell(`AVERAGEIFS(${detailRange('O')},${detailRange('A')},${hodRef})`, avgSew),
-                // AF: SEW Planned
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('N')},"<>")=0,"",MAXIFS(${detailRange('N')},${detailRange('A')},${hodRef}))`,
-                    bucket.sewPlannedSerial
-                ),
-                // AG: SEW Actual
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('M')},"<>")=0,"",MAXIFS(${detailRange('M')},${detailRange('A')},${hodRef}))`,
-                    bucket.sewEndSerial
-                ),
+                // AF: Planned Sewing for balance
+                makeDateCell(bucket.delaySewStartMin),
+                // AG: Actual Sewing Completion
+                makeDateCell(bucket.delaySewEndMax),
                 // AH: days before HOD sew  (A − AA)
                 makeFormulaNumberCell(
                     `IF(OR($A${excelRow}="",AA${excelRow}=""),"", $A${excelRow}-AA${excelRow})`,
@@ -2920,50 +3260,46 @@ class GridController {
                     bucket.finishEndSerial
                 ),
                 // AK: FINISH # lines
-                makeFormulaNumberCell(
-                    `SUMIFS(${detailRange('V')},${detailRange('A')},${hodRef})`,
-                    bucket.sewingLines.filter(textValue).reduce((s, v) => s + parseSewingLineCount(v), 0)
-                ),
-                // AL: FINISH Completed  (B × AM%)
-                makeFormulaNumberCell(`ROUND($B${excelRow}*$AM${excelRow},0)`, Math.round(bucket.totalQty * avgFinish)),
-                // AM: FINISH %
+                {
+                    t: 'n',
+                    v: uniqueSewingLines.length,
+                    z: '#,##0'
+                },
+                // AL: FINISH lines
+                uniqueSewingLines.join(' | '),
+                // AM: FINISH Completed (B x AN%)
+                makeFormulaNumberCell(`ROUND($B${excelRow}*$AN${excelRow},0)`, Math.round(bucket.totalQty * avgFinish)),
+                // AN: FINISH %
                 makeFormulaPercentCell(`AVERAGEIFS(${detailRange('R')},${detailRange('A')},${hodRef})`, avgFinish),
-                // AN: FINISH Planned
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('Q')},"<>")=0,"",MAXIFS(${detailRange('Q')},${detailRange('A')},${hodRef}))`,
-                    bucket.finishEndSerial
-                ),
-                // AO: FINISH Actual
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('Q')},"<>")=0,"",MAXIFS(${detailRange('Q')},${detailRange('A')},${hodRef}))`,
-                    bucket.finishEndSerial
-                ),
-                // AP: days before HOD finish  (A − AJ)
+                // AO: Planned Finishing for balance
+                makeDateCell(bucket.delayPackStartMin),
+                // AP: Actual Finishing Completion
+                makeDateCell(bucket.delayPackEndMax),
+                // AQ: days before HOD finish (A - AJ)
                 makeFormulaNumberCell(
                     `IF(OR($A${excelRow}="",AJ${excelRow}=""),"", $A${excelRow}-AJ${excelRow})`,
                     bucket.hodSerial !== null && bucket.finishEndSerial !== null ? Math.round(bucket.hodSerial - bucket.finishEndSerial) : null
                 ),
 
-                // AQ: INSP Planned
+                // AR: INSP Planned
                 makeFormulaDateCell(
                     `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('S')},"<>")=0,"",MAXIFS(${detailRange('S')},${detailRange('A')},${hodRef}))`,
                     bucket.inspectionPlannedSerial
                 ),
-                // AR: INSP Completed  (B × AS%)
-                makeFormulaNumberCell(`ROUND($B${excelRow}*$AS${excelRow},0)`, Math.round(bucket.totalQty * avgInspection)),
-                // AS: INSP %
+                // AS: INSP Completed (B x AT%)
+                makeFormulaNumberCell(`ROUND($B${excelRow}*$AT${excelRow},0)`, Math.round(bucket.totalQty * avgInspection)),
+                // AT: INSP %
                 makeFormulaPercentCell(`AVERAGEIFS(${detailRange('U')},${detailRange('A')},${hodRef})`, avgInspection),
-                // AT: INSP Actual
-                makeFormulaDateCell(
-                    `IF(COUNTIFS(${detailRange('A')},${hodRef},${detailRange('T')},"<>")=0,"",MAXIFS(${detailRange('T')},${detailRange('A')},${hodRef}))`,
-                    bucket.inspectionActualSerial
-                ),
-                // AU: days before HOD last FRI  (A − MAX(AQ, AT))
+                // AU: INSP Actual
+                '',
+                // AV: days before HOD last FRI (A - MAX(AR, AU))
                 makeFormulaNumberCell(
-                    `IF(COUNTA(AQ${excelRow},AT${excelRow})=0,"",$A${excelRow}-MAX(AQ${excelRow},AT${excelRow}))`,
-                    bucket.hodSerial !== null && inspRefSerial !== null ? Math.round(bucket.hodSerial - inspRefSerial) : null
+                    `IF(COUNTA(AR${excelRow},AU${excelRow})=0,"",$A${excelRow}-MAX(AR${excelRow},AU${excelRow}))`,
+                    bucket.hodSerial !== null && bucket.inspectionPlannedSerial !== null
+                        ? Math.round(bucket.hodSerial - bucket.inspectionPlannedSerial)
+                        : null
                 ),
-                // AV: Comments (vacío)
+                // AW: Comments (vacio)
                 ''
             ]);
         }
@@ -2975,21 +3311,10 @@ class GridController {
 
         const wb = XLSX.utils.book_new();
         const ws = XLSX.utils.aoa_to_sheet(seguimientoData);
-        ws['!cols'] = seguimientoHeaders.map((h) => {
-            const t = String(h || '');
-            if (t.includes('Bulk') || t.includes('Garment') || t.includes('Gb Test') ||
-                t === 'Status' || t === 'Priority' || t === 'HAS Y/N' || t === 'PP Approved') {
-                return { wch: 28 };
-            }
-            if (t.includes('Further Delay')) return { wch: 34 };
-            if (t.includes('Comments'))      return { wch: 60 };
-            if (t === '# of lines')          return { wch: 12 };
-            if (t === 'lines')               return { wch: 38 };
-            if (t === '%')                   return { wch: 10 };
-            if (t.includes('days before'))   return { wch: 18 };
-            return { wch: 18 };
-        });
+        this.keepOnlyFormulaByHeader(ws, 'days before HOD that done the last FRI');
+        ws['!cols'] = seguimientoHeaders.map(() => ({ wch: 18 }));
         this.applyExcelTheme(ws);
+        this.clearBodyFills(ws);
 
         XLSX.utils.book_append_sheet(wb, ws, 'Seguimiento');
 
@@ -2998,6 +3323,8 @@ class GridController {
         XLSX.utils.book_append_sheet(wb, detailWs, detailSheetName);
         const formulaMapWs = this.buildFormulaMapWorksheet(wb);
         if (formulaMapWs) {
+            formulaMapWs['!cols'] = ['Sheet', 'Cell', 'Formula', 'Value'].map(() => ({ wch: 18 }));
+            this.clearBodyFills(formulaMapWs);
             XLSX.utils.book_append_sheet(wb, formulaMapWs, 'Mapa de Formulas');
         }
         wb.Workbook = wb.Workbook || {};
