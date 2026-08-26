@@ -46,7 +46,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const hodFilterLabel = document.getElementById('hod-filter-label');
     const hodFilterPanel = document.getElementById('hod-filter-panel');
     const hodMonthSelect = document.getElementById('hod-month-select');
-    const hodDateSearch = document.getElementById('hod-date-search');
+    const hodDateStart = document.getElementById('hod-date-start');
+    const hodDateEnd = document.getElementById('hod-date-end');
+    const hodFilterSummary = document.getElementById('hod-filter-summary');
+    const hodSummaryTitle = document.getElementById('hod-summary-title');
+    const hodSummaryDetail = document.getElementById('hod-summary-detail');
     const hodCheckAll = document.getElementById('hod-check-all');
     const hodCheckList = document.getElementById('hod-check-list');
     const btnHodAccept = document.getElementById('btn-hod-accept');
@@ -158,17 +162,170 @@ document.addEventListener('DOMContentLoaded', () => {
         if (btnBackMenu) btnBackMenu.classList.add('hidden');
     };
 
+    const formatIsoDateLabel = (value) => {
+        const raw = String(value || '').trim();
+        if (!raw) return '';
+        const parts = raw.split('-');
+        if (parts.length !== 3) return raw;
+        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    };
+
+    const getSelectedHodMonthValues = () => {
+        if (!hodMonthSelect) return [];
+        return Array.from(hodMonthSelect.selectedOptions || [])
+            .map((opt) => String(opt.value || '').trim())
+            .filter(Boolean);
+    };
+
+    const setSelectedHodMonthValues = (values = []) => {
+        if (!hodMonthSelect) return;
+        const selected = new Set(
+            (Array.isArray(values) ? values : [values])
+                .map((value) => String(value || '').trim())
+                .filter(Boolean)
+        );
+        Array.from(hodMonthSelect.options).forEach((opt) => {
+            opt.selected = selected.has(opt.value);
+        });
+    };
+
+    const getHodRangeSelection = () => ({
+        start: hodDateStart ? String(hodDateStart.value || '').trim() : '',
+        end: hodDateEnd ? String(hodDateEnd.value || '').trim() : ''
+    });
+
+    const setHodRangeSelection = (start = '', end = '') => {
+        if (hodDateStart) hodDateStart.value = start || '';
+        if (hodDateEnd) hodDateEnd.value = end || '';
+    };
+
+    const syncHodFilterState = () => {
+        if (!grid || !grid.filters) return;
+        grid.filters.hodDates = getSelectedStatusHodValues();
+        grid.filters.hodMonths = getSelectedHodMonthValues();
+        const { start, end } = getHodRangeSelection();
+        grid.filters.hodStartDate = start;
+        grid.filters.hodEndDate = end;
+    };
+
+    const buildHodSummaryText = () => {
+        const selectedDates = getSelectedStatusHodValues();
+        if (selectedDates.length === 1) {
+            const opt = allHodOptions.find((o) => o.value === selectedDates[0]);
+            return opt ? opt.label : formatIsoDateLabel(selectedDates[0]);
+        }
+        if (selectedDates.length > 1) {
+            return `${selectedDates.length} seleccionados`;
+        }
+
+        const { start, end } = getHodRangeSelection();
+        if (start && end) {
+            return `${formatIsoDateLabel(start)} - ${formatIsoDateLabel(end)}`;
+        }
+        if (start) {
+            return `desde ${formatIsoDateLabel(start)}`;
+        }
+        if (end) {
+            return `hasta ${formatIsoDateLabel(end)}`;
+        }
+
+        const selectedMonths = getSelectedHodMonthValues();
+        if (selectedMonths.length === 1 && hodMonthSelect) {
+            const opt = Array.from(hodMonthSelect.options).find((o) => o.value === selectedMonths[0]);
+            return opt ? opt.textContent.trim() : selectedMonths[0];
+        }
+        if (selectedMonths.length > 1) {
+            return `${selectedMonths.length} meses`;
+        }
+
+        return '';
+    };
+
+    const updateHodFilterSummary = () => {
+        if (!hodFilterSummary && !hodSummaryTitle && !hodSummaryDetail) return;
+
+        const selectedDates = getSelectedStatusHodValues();
+        const selectedMonths = getSelectedHodMonthValues();
+        const { start, end } = getHodRangeSelection();
+        const hasSelection = selectedDates.length > 0 || selectedMonths.length > 0 || Boolean(start || end);
+
+        if (hodFilterSummary) {
+            hodFilterSummary.classList.toggle('is-active', hasSelection);
+        }
+
+        if (hodSummaryTitle) {
+            hodSummaryTitle.textContent = buildHodSummaryText() || 'Selecciona meses o fechas';
+        }
+
+        if (hodSummaryDetail) {
+            const detailParts = [];
+            if (selectedDates.length > 0) {
+                detailParts.push(`${selectedDates.length} fechas marcadas`);
+            }
+            if (selectedMonths.length > 0) {
+                detailParts.push(`${selectedMonths.length} meses activos`);
+            }
+            if (start || end) {
+                const rangeLabel = start && end
+                    ? `${formatIsoDateLabel(start)} - ${formatIsoDateLabel(end)}`
+                    : start
+                        ? `desde ${formatIsoDateLabel(start)}`
+                        : `hasta ${formatIsoDateLabel(end)}`;
+                detailParts.push(`Rango: ${rangeLabel}`);
+            }
+            hodSummaryDetail.textContent = detailParts.length > 0
+                ? detailParts.join(' · ')
+                : 'Combina meses, rango y selección directa.';
+        }
+    };
+
+    const updateKpiCardLabels = () => {
+        if (!grid || !grid.kpisContainer) return;
+
+        const labelNodes = Array.from(grid.kpisContainer.querySelectorAll('.kpi-info h4'));
+        if (labelNodes.length === 0) return;
+
+        const isHodModule = grid.activeModule === 'status' || grid.activeModule === 'seguimiento';
+        const summary = isHodModule ? buildHodSummaryText() : '';
+        const labels = isHodModule
+            ? [
+                summary ? `Cantidad HOD (${summary})` : 'Cantidad HOD',
+                'Total facturado HOD',
+                'Filas agrupadas HOD',
+                'Margen promedio HOD'
+            ]
+            : [
+                'Cantidad total',
+                'Total facturado',
+                'Filas agrupadas',
+                'Margen promedio'
+            ];
+
+        labelNodes.forEach((node, index) => {
+            if (labels[index]) {
+                node.textContent = labels[index];
+            }
+        });
+    };
+
     const updateHodFilterLabel = () => {
         if (!hodFilterLabel) return;
+
+        syncHodFilterState();
         const selected = getSelectedStatusHodValues();
+        const summary = buildHodSummaryText();
+
         if (selected.length === 0) {
-            hodFilterLabel.textContent = 'HOD: Todos';
+            hodFilterLabel.textContent = summary ? `HOD: ${summary}` : 'HOD: Todos';
         } else if (selected.length === 1) {
             const opt = allHodOptions.find((o) => o.value === selected[0]);
             hodFilterLabel.textContent = `HOD: ${opt ? opt.label : selected[0]}`;
         } else {
             hodFilterLabel.textContent = `HOD: ${selected.length} seleccionados`;
         }
+
+        updateHodFilterSummary();
+        updateKpiCardLabels();
     };
 
     const updateHodCheckAllState = () => {
@@ -189,18 +346,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const filterHodCheckList = () => {
         if (!hodCheckList) return;
-        const monthValue = hodMonthSelect ? hodMonthSelect.value : '';
-        const searchValue = hodDateSearch ? hodDateSearch.value.toLowerCase().trim() : '';
+        const monthValues = getSelectedHodMonthValues();
+        const { start, end } = getHodRangeSelection();
+        let rangeStart = start;
+        let rangeEnd = end;
+
+        if (rangeStart && rangeEnd && rangeStart > rangeEnd) {
+            const temp = rangeStart;
+            rangeStart = rangeEnd;
+            rangeEnd = temp;
+        }
 
         hodCheckList.querySelectorAll('.hod-check-row').forEach((row) => {
             const value = row.dataset.value || '';
-            const label = (row.dataset.label || '').toLowerCase();
-            const matchMonth = !monthValue || value.substring(0, 7) === monthValue;
-            const matchSearch = !searchValue || label.includes(searchValue);
-            row.classList.toggle('hod-hidden', !matchMonth || !matchSearch);
+            const matchMonth = monthValues.length === 0 || monthValues.some((monthValue) => value.substring(0, 7) === monthValue);
+            const matchStart = !rangeStart || value >= rangeStart;
+            const matchEnd = !rangeEnd || value <= rangeEnd;
+            row.classList.toggle('hod-hidden', !(matchMonth && matchStart && matchEnd));
         });
 
         updateHodCheckAllState();
+        updateHodFilterLabel();
     };
 
     const getSelectedStatusHodValues = () => {
@@ -208,6 +374,21 @@ document.addEventListener('DOMContentLoaded', () => {
         return Array.from(hodCheckList.querySelectorAll('input[type="checkbox"]:checked'))
             .map((cb) => cb.value)
             .filter(Boolean);
+    };
+
+    const getVisibleStatusHodValues = () => {
+        if (!hodCheckList) return [];
+        return Array.from(hodCheckList.querySelectorAll('.hod-check-row:not(.hod-hidden) input[type="checkbox"]'))
+            .map((cb) => cb.value)
+            .filter(Boolean);
+    };
+
+    const getEffectiveStatusHodValues = () => {
+        const selected = getSelectedStatusHodValues();
+        if (selected.length > 0) {
+            return selected;
+        }
+        return getVisibleStatusHodValues();
     };
 
     const setSelectedStatusHodValues = (values = []) => {
@@ -257,6 +438,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? grid.filters.hodDates
                 : getSelectedStatusHodValues()
         );
+        const currentMonths = new Set(
+            Array.isArray(grid.filters.hodMonths) && grid.filters.hodMonths.length > 0
+                ? grid.filters.hodMonths
+                : getSelectedHodMonthValues()
+        );
+        const currentRange = getHodRangeSelection();
 
         allHodOptions = typeof grid.getStatusHodOptions === 'function'
             ? grid.getStatusHodOptions()
@@ -265,9 +452,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (allHodOptions.length === 0) {
             hodCheckList.innerHTML = '<div class="hod-empty">No hay fechas disponibles</div>';
             if (hodMonthSelect) {
-                hodMonthSelect.innerHTML = '<option value="">Todos los meses</option>';
+                hodMonthSelect.innerHTML = '';
             }
+            setHodRangeSelection(currentRange.start, currentRange.end);
             grid.filters.hodDates = [];
+            grid.filters.hodMonths = [];
+            grid.filters.hodStartDate = currentRange.start;
+            grid.filters.hodEndDate = currentRange.end;
+            updateKpiCardLabels();
             return;
         }
 
@@ -286,11 +478,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
             });
-            hodMonthSelect.innerHTML = '<option value="">Todos los meses</option>' +
-                [...months.entries()]
-                    .map(([k, v]) => `<option value="${k}">${v}</option>`)
-                    .join('');
+            hodMonthSelect.innerHTML = [...months.entries()]
+                .map(([k, v]) => `<option value="${k}">${v}</option>`)
+                .join('');
+            setSelectedHodMonthValues([...months.keys()].filter((k) => currentMonths.has(k)));
         }
+
+        setHodRangeSelection(currentRange.start, currentRange.end);
 
         // Populate checkbox list
         hodCheckList.innerHTML = allHodOptions
@@ -307,6 +501,8 @@ document.addEventListener('DOMContentLoaded', () => {
             .filter((v) => currentValues.has(v));
         setSelectedStatusHodValues(nextValues);
         grid.filters.hodDates = nextValues;
+        syncHodFilterState();
+        filterHodCheckList();
     };
 
     /**
@@ -348,6 +544,8 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             closeHodPanel();
         }
+
+        updateKpiCardLabels();
     };
 
     const waitForPaint = () => new Promise((resolve) => setTimeout(resolve, 75));
@@ -447,8 +645,12 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) {
             console.error(err);
             alert(`No se pudo abrir el módulo ${moduleLabel}:\n${err.message}`);
-            menuView.classList.remove('hidden');
-            dataView.classList.add('hidden');
+            if (moduleName === 'status') {
+                showMenuView();
+            } else {
+                menuView.classList.remove('hidden');
+                dataView.classList.add('hidden');
+            }
         } finally {
             toggleLoading(false);
         }
@@ -494,11 +696,19 @@ document.addEventListener('DOMContentLoaded', () => {
                     const parsedRows = await window.ExcelParser.parseGlobalReport(arrayBuffer);
 
                     if (parsedRows.length === 0) {
-                        throw new Error("No se encontraron registros de produccion validos para facturar en la hoja 'LLL GR.'.");
+                        throw new Error("No se encontraron registros de produccion validos para facturar en la hoja 'Global Report'.");
                     }
 
                     toggleLoading(true, 'Renderizando la cuadricula y calculando formulas...');
                     grid.setSourceArrayBuffer(arrayBuffer);
+                    grid.filters.hodDates = [];
+                    grid.filters.hodMonths = [];
+                    grid.filters.hodStartDate = '';
+                    grid.filters.hodEndDate = '';
+                    setSelectedHodMonthValues([]);
+                    setHodRangeSelection('', '');
+                    clearStatusHodSelection();
+                    allHodOptions = [];
                     populateStatusHodFilter();
                     grid.setActiveModule('facturacion');
                     updateExportButtonLabel();
@@ -544,8 +754,14 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    if (hodDateSearch) {
-        hodDateSearch.addEventListener('input', () => {
+    if (hodDateStart) {
+        hodDateStart.addEventListener('change', () => {
+            filterHodCheckList();
+        });
+    }
+
+    if (hodDateEnd) {
+        hodDateEnd.addEventListener('change', () => {
             filterHodCheckList();
         });
     }
@@ -573,7 +789,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (btnHodAccept) {
         btnHodAccept.addEventListener('click', () => {
-            const selected = getSelectedStatusHodValues();
+            const selected = getEffectiveStatusHodValues();
+            syncHodFilterState();
             grid.filters.hodDates = selected;
             grid.currentPage = 1;
             grid.applyFilters();
@@ -583,9 +800,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (btnHodClear) {
         btnHodClear.addEventListener('click', () => {
+            setSelectedHodMonthValues([]);
+            setHodRangeSelection('', '');
             clearStatusHodSelection();
-            if (hodMonthSelect) hodMonthSelect.value = '';
-            if (hodDateSearch) hodDateSearch.value = '';
+            grid.filters.hodDates = [];
+            grid.filters.hodMonths = [];
+            grid.filters.hodStartDate = '';
+            grid.filters.hodEndDate = '';
             filterHodCheckList();
         });
     }
@@ -688,9 +909,9 @@ document.addEventListener('DOMContentLoaded', () => {
         selectVendor.value = '';
         selectSeason.value = '';
         selectStatus.value = '';
+        setSelectedHodMonthValues([]);
+        setHodRangeSelection('', '');
         clearStatusHodSelection();
-        if (hodMonthSelect) hodMonthSelect.value = '';
-        if (hodDateSearch) hodDateSearch.value = '';
         filterHodCheckList();
 
         grid.searchTerm = '';
@@ -698,6 +919,9 @@ document.addEventListener('DOMContentLoaded', () => {
         grid.filters.season = '';
         grid.filters.status = '';
         grid.filters.hodDates = [];
+        grid.filters.hodMonths = [];
+        grid.filters.hodStartDate = '';
+        grid.filters.hodEndDate = '';
         grid.currentPage = 1;
 
         grid.applyFilters();
@@ -731,12 +955,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (grid.activeModule === 'status') {
-            const selectedHodDates = getSelectedStatusHodValues();
+            const selectedHodDates = getEffectiveStatusHodValues();
+            syncHodFilterState();
             grid.filters.hodDates = selectedHodDates;
 
             await runExportTask('Generando Production Status...', () => {
                 grid.exportStatusExcel({
                     hodDates: selectedHodDates,
+                    hodMonths: grid.filters.hodMonths,
+                    hodStartDate: grid.filters.hodStartDate,
+                    hodEndDate: grid.filters.hodEndDate,
                     season: grid.filters.season,
                     vendor: grid.filters.data1,
                     status: grid.filters.status
@@ -746,12 +974,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (grid.activeModule === 'seguimiento') {
-            const selectedHodDates = getSelectedStatusHodValues();
+            const selectedHodDates = getEffectiveStatusHodValues();
+            syncHodFilterState();
             grid.filters.hodDates = selectedHodDates;
 
             await runExportTask('Generando Seguimiento...', () => {
                 grid.exportSeguimientoExcel({
                     hodDates: selectedHodDates,
+                    hodMonths: grid.filters.hodMonths,
+                    hodStartDate: grid.filters.hodStartDate,
+                    hodEndDate: grid.filters.hodEndDate,
                     season: grid.filters.season,
                     vendor: grid.filters.data1,
                     status: grid.filters.status
@@ -781,7 +1013,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     btnBackMenu.addEventListener('click', () => { showMenuView(); });
     headerBackMenu.addEventListener('click', () => { showMenuView(); });
-
     if (btnReimport) {
         btnReimport.addEventListener('click', () => {
             if (confirm('¿Deseas cargar un nuevo archivo? Se perderán los cambios no exportados.')) {
@@ -792,22 +1023,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 selectVendor.value = '';
                 selectSeason.value = '';
                 selectStatus.value = '';
+                setSelectedHodMonthValues([]);
+                setHodRangeSelection('', '');
                 clearStatusHodSelection();
-                if (hodMonthSelect) hodMonthSelect.value = '';
-                if (hodDateSearch) hodDateSearch.value = '';
                 closeHodPanel();
 
                 grid.data = [];
                 grid.filteredData = [];
                 grid.searchTerm = '';
-                grid.filters = { data1: '', season: '', status: '', hodDates: [] };
+                grid.filters = {
+                    data1: '',
+                    season: '',
+                    status: '',
+                    hodDates: [],
+                    hodMonths: [],
+                    hodStartDate: '',
+                    hodEndDate: ''
+                };
                 grid.setSourceArrayBuffer(null);
                 if (sdrController) {
                     sdrController.clear();
                 }
                 allHodOptions = [];
                 if (hodCheckList) hodCheckList.innerHTML = '';
-                if (hodMonthSelect) hodMonthSelect.innerHTML = '<option value="">Todos los meses</option>';
+                if (hodMonthSelect) hodMonthSelect.innerHTML = '';
 
                 grid.setActiveModule('facturacion');
                 updateExportButtonLabel();
