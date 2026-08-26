@@ -61,10 +61,23 @@ const ExcelParser = {
                 const data = new Uint8Array(arrayBuffer);
                 const workbook = XLSX.read(data, { type: 'array', cellDates: false, cellNF: false, cellText: false });
                 
-                // Buscar la hoja LLL GR.
-                const sheetName = 'LLL GR.';
-                if (!workbook.SheetNames.includes(sheetName)) {
-                    throw new Error(`No se encontró la hoja requerida '${sheetName}' en el archivo Excel.`);
+                // Buscar la hoja principal aunque cambie el nombre entre plantillas.
+                const normalizeSheetName = (name) => ExcelParser.normalizeText(name)
+                    .replace(/[._\-\/]+/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+
+                const sheetName = workbook.SheetNames.find((name) => {
+                    const normalized = normalizeSheetName(name);
+                    return normalized === 'global report'
+                        || normalized === 'lll gr'
+                        || normalized.includes('global report')
+                        || normalized.includes('lll gr')
+                        || normalized.includes('wip');
+                }) || workbook.SheetNames[0];
+
+                if (!sheetName) {
+                    throw new Error('No se encontró ninguna hoja válida en el archivo Excel.');
                 }
                 
                 const worksheet = workbook.Sheets[sheetName];
