@@ -17,7 +17,10 @@ class GridController {
             data1: '', // VENDOR
             season: '',
             status: '',  // STATUS calc
-            hodDates: []
+            hodDates: [],
+            hodMonths: [],
+            hodStartDate: '',
+            hodEndDate: ''
         };
         this.activeModule = 'facturacion';
         this.sourceArrayBuffer = null;
@@ -121,6 +124,29 @@ class GridController {
             .normalize('NFD')
             .replace(/[\u0300-\u036f]/g, '')
             .trim();
+    }
+
+    /**
+     * Encuentra la hoja principal del libro aunque cambie entre plantillas.
+     */
+    resolveSourceSheetName(workbook) {
+        if (!workbook || !Array.isArray(workbook.SheetNames) || workbook.SheetNames.length === 0) {
+            return '';
+        }
+
+        const normalizeSheetName = (name) => this.normalizeText(name)
+            .replace(/[._\-\/]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        return workbook.SheetNames.find((name) => {
+            const normalized = normalizeSheetName(name);
+            return normalized === 'global report'
+                || normalized === 'lll gr'
+                || normalized.includes('global report')
+                || normalized.includes('lll gr')
+                || normalized.includes('wip');
+        }) || workbook.SheetNames[0] || '';
     }
 
     /**
@@ -1537,14 +1563,13 @@ class GridController {
             cellNF: true, cellText: false, cellDates: true
         });
 
-        const sourceSheetName = sourceWorkbook.SheetNames.includes('LLL GR.')
-            ? 'LLL GR.' : sourceWorkbook.SheetNames[0];
+        const sourceSheetName = this.resolveSourceSheetName(sourceWorkbook);
         const sourceWs = sourceWorkbook.Sheets[sourceSheetName];
 
         if (!sourceWs || !sourceWs['!ref']) return [];
 
         const sourceRange = XLSX.utils.decode_range(sourceWs['!ref']);
-        const headerRowIndex = 5;
+        const headerRowIndex = 4;
 
         let statusSeasonCol = 3;
         for (let c = sourceRange.s.c; c <= sourceRange.e.c; c += 1) {
@@ -1605,9 +1630,7 @@ class GridController {
             cellDates: true
         });
 
-        const sourceSheetName = sourceWorkbook.SheetNames.includes('LLL GR.')
-            ? 'LLL GR.'
-            : sourceWorkbook.SheetNames[0];
+        const sourceSheetName = this.resolveSourceSheetName(sourceWorkbook);
         const sourceWs = sourceWorkbook.Sheets[sourceSheetName];
 
         if (!sourceWs || !sourceWs['!ref']) {
@@ -1616,7 +1639,7 @@ class GridController {
         }
 
         const sourceRange = XLSX.utils.decode_range(sourceWs['!ref']);
-        const headerRowIndex = 5; // Fila 6 de Excel
+        const headerRowIndex = 4; // Fila 5 de Excel
 
         let statusSeasonCol = 3; // Columna D por defecto
         for (let c = sourceRange.s.c; c <= sourceRange.e.c; c += 1) {
@@ -1735,9 +1758,7 @@ class GridController {
             cellDates: true
         });
 
-        const sourceSheetName = sourceWorkbook.SheetNames.includes('LLL GR.')
-            ? 'LLL GR.'
-            : sourceWorkbook.SheetNames[0];
+        const sourceSheetName = this.resolveSourceSheetName(sourceWorkbook);
         const sourceWs = sourceWorkbook.Sheets[sourceSheetName];
 
         if (!sourceWs || !sourceWs['!ref']) {
@@ -1745,7 +1766,7 @@ class GridController {
         }
 
         const sourceRange = XLSX.utils.decode_range(sourceWs['!ref']);
-        const headerRowIndex = 5; // Row 6 of Excel
+        const headerRowIndex = 4; // Row 5 of Excel
         const headerMap = new Map();
 
         for (let c = sourceRange.s.c; c <= sourceRange.e.c; c += 1) {
@@ -1775,6 +1796,14 @@ class GridController {
             return cell.v;
         };
 
+        const getHodCellValue = (sourceRow) => getSourceCellValue(
+            sourceRow,
+            'Orig PO Handover',
+            'HOD COFACO',
+            'HOD LLL',
+            'HOD'
+        );
+
         const optionsMap = new Map();
 
         for (let sourceRow = headerRowIndex + 1; sourceRow <= sourceRange.e.r; sourceRow += 1) {
@@ -1785,7 +1814,7 @@ class GridController {
 
             // El filtro HOD del Status corresponde a "Orig PO Handover" (col AC),
             // que es la fecha que el usuario selecciona para exportar y la que va en "HOD LLL".
-            const hodValue = getSourceCellValue(sourceRow, 'Orig PO Handover');
+            const hodValue = getHodCellValue(sourceRow);
             const hodSerial = this.dateToExcelSerial(hodValue);
             if (hodSerial === null) {
                 continue;
@@ -2094,9 +2123,7 @@ class GridController {
             cellDates: true
         });
 
-        const sourceSheetName = sourceWorkbook.SheetNames.includes('LLL GR.')
-            ? 'LLL GR.'
-            : sourceWorkbook.SheetNames[0];
+        const sourceSheetName = this.resolveSourceSheetName(sourceWorkbook);
         const sourceWs = sourceWorkbook.Sheets[sourceSheetName];
 
         if (!sourceWs || !sourceWs['!ref']) {
@@ -2105,7 +2132,7 @@ class GridController {
         }
 
         const sourceRange = XLSX.utils.decode_range(sourceWs['!ref']);
-        const headerRowIndex = 5; // Row 6 of Excel
+        const headerRowIndex = 4; // Row 5 of Excel
         const headerMap = new Map();
 
         for (let c = sourceRange.s.c; c <= sourceRange.e.c; c += 1) {
@@ -2280,7 +2307,7 @@ class GridController {
 
             // HOD LLL se toma de "Orig PO Handover" (col AC): es la llave de agrupacion
             // y el valor que se muestra en el encabezado "HOD LLL" del Status.
-            const hodValue = getSourceCellValue(sourceRow, 'Orig PO Handover');
+            const hodValue = getHodCellValue(sourceRow);
             const hodIso = statusDateToIsoDate(hodValue);
             if (selectedHodSet.size > 0 && !selectedHodSet.has(hodIso)) {
                 continue;
@@ -2289,7 +2316,7 @@ class GridController {
                 continue;
             }
 
-            const hodSerial = getDateSerial(sourceRow, 'Orig PO Handover');
+            const hodSerial = getDateSerial(sourceRow, 'Orig PO Handover', 'HOD COFACO', 'HOD LLL', 'HOD');
             // HOD LULULEMON (col AE): fecha actual del handover. Si es POSTERIOR a la
             // Orig PO Handover del grupo, su volumen se cuenta como "Further Delay".
             const hodLululemonSerial = getDateSerial(sourceRow, 'HOD\nLULULEMON');
@@ -2860,8 +2887,7 @@ class GridController {
             cellNF: true, cellText: false, cellDates: true
         });
 
-        const sourceSheetName = sourceWorkbook.SheetNames.includes('LLL GR.')
-            ? 'LLL GR.' : sourceWorkbook.SheetNames[0];
+        const sourceSheetName = this.resolveSourceSheetName(sourceWorkbook);
         const sourceWs = sourceWorkbook.Sheets[sourceSheetName];
 
         if (!sourceWs || !sourceWs['!ref']) {
@@ -2870,7 +2896,7 @@ class GridController {
         }
 
         const sourceRange = XLSX.utils.decode_range(sourceWs['!ref']);
-        const headerRowIndex = 5;
+        const headerRowIndex = 4;
         const headerMap = new Map();
 
         for (let c = sourceRange.s.c; c <= sourceRange.e.c; c += 1) {
@@ -2894,6 +2920,14 @@ class GridController {
             if (!cell || cell.v === undefined || cell.v === null) return '';
             return cell.v;
         };
+
+        const getHodCellValue = (sourceRow) => getSourceCellValue(
+            sourceRow,
+            'Orig PO Handover',
+            'HOD COFACO',
+            'HOD LLL',
+            'HOD'
+        );
 
         const getDateSerial = (sourceRow, ...aliases) =>
             statusDateToExcelSerial(getSourceCellValue(sourceRow, ...aliases));
@@ -2990,12 +3024,12 @@ class GridController {
             const sourceVendor = textValue(getSourceCellValue(sourceRow, 'VENDOR'));
             if (selectedVendor && this.normalizeText(sourceVendor) !== this.normalizeText(selectedVendor)) continue;
 
-            const hodValue = getSourceCellValue(sourceRow, 'Orig PO Handover');
+            const hodValue = getHodCellValue(sourceRow);
             const hodIso = statusDateToIsoDate(hodValue);
             if (selectedHodSet.size > 0 && !selectedHodSet.has(hodIso)) continue;
             if (!hodIso) continue;
 
-            const hodSerial      = getDateSerial(sourceRow, 'Orig PO Handover');
+            const hodSerial      = getDateSerial(sourceRow, 'Orig PO Handover', 'HOD COFACO', 'HOD LLL', 'HOD');
             const hodLululemonSerial = getDateSerial(sourceRow, 'HOD\nLULULEMON');
             const isFurtherDelay = hodSerial !== null && hodLululemonSerial !== null && hodLululemonSerial > hodSerial;
             const totalQty       = numberValue(getSourceCellValue(sourceRow, 'TOTAL PO Qty', 'TOTAL Qty to Ship')) || 0;
