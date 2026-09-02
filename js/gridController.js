@@ -127,6 +127,53 @@ class GridController {
     }
 
     /**
+     * Detecta la fila real de cabeceras del reporte global.
+     */
+    findGlobalHeaderRow(sourceWs, scanRows = 15) {
+        if (!sourceWs || !sourceWs['!ref']) return -1;
+
+        const sourceRange = XLSX.utils.decode_range(sourceWs['!ref']);
+        const lastRow = Math.min(sourceRange.e.r, sourceRange.s.r + Math.max(1, scanRows) - 1);
+
+        for (let r = sourceRange.s.r; r <= lastRow; r += 1) {
+            let hasStatusSeason = false;
+            let hasVendor = false;
+
+            for (let c = sourceRange.s.c; c <= sourceRange.e.c; c += 1) {
+                const cell = sourceWs[XLSX.utils.encode_cell({ r, c })];
+                const normalized = this.normalizeText(cell ? cell.v : '');
+                if (!normalized) continue;
+
+                if (normalized === 'status season') hasStatusSeason = true;
+                if (normalized === 'vendor') hasVendor = true;
+
+                if (hasStatusSeason && hasVendor) {
+                    return r;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    /**
+     * Construye un mapa de cabeceras normalizadas por columna.
+     */
+    buildHeaderMap(sourceWs, sourceRange, headerRowIndex) {
+        const headerMap = new Map();
+
+        for (let c = sourceRange.s.c; c <= sourceRange.e.c; c += 1) {
+            const headerCell = sourceWs[XLSX.utils.encode_cell({ r: headerRowIndex, c })];
+            const normalizedHeader = this.normalizeText(headerCell ? headerCell.v : '');
+            if (normalizedHeader) {
+                headerMap.set(normalizedHeader, c);
+            }
+        }
+
+        return headerMap;
+    }
+
+    /**
      * Encuentra la hoja principal del libro aunque cambie entre plantillas.
      */
     resolveSourceSheetName(workbook) {
@@ -1569,16 +1616,12 @@ class GridController {
         if (!sourceWs || !sourceWs['!ref']) return [];
 
         const sourceRange = XLSX.utils.decode_range(sourceWs['!ref']);
-        const headerRowIndex = 4;
+        const headerRowIndex = this.findGlobalHeaderRow(sourceWs);
+        if (headerRowIndex === -1) return [];
 
-        let statusSeasonCol = 3;
-        for (let c = sourceRange.s.c; c <= sourceRange.e.c; c += 1) {
-            const hCell = sourceWs[XLSX.utils.encode_cell({ r: headerRowIndex, c })];
-            if (norm(hCell ? hCell.v : '') === 'status season') {
-                statusSeasonCol = c;
-                break;
-            }
-        }
+        const headerMap = this.buildHeaderMap(sourceWs, sourceRange, headerRowIndex);
+        const statusSeasonCol = headerMap.get('status season');
+        if (statusSeasonCol === undefined) return [];
 
         const seen = new Map();
         for (let r = headerRowIndex + 1; r <= sourceRange.e.r; r += 1) {
@@ -1639,16 +1682,20 @@ class GridController {
         }
 
         const sourceRange = XLSX.utils.decode_range(sourceWs['!ref']);
-        const headerRowIndex = 4; // Fila 5 de Excel
-
-        let statusSeasonCol = 3; // Columna D por defecto
-        for (let c = sourceRange.s.c; c <= sourceRange.e.c; c += 1) {
-            const headerCell = sourceWs[XLSX.utils.encode_cell({ r: headerRowIndex, c })];
-            if (normalizeText(headerCell ? headerCell.v : '') === 'status season') {
-                statusSeasonCol = c;
-                break;
-            }
+        const headerRowIndex = this.findGlobalHeaderRow(sourceWs);
+        if (headerRowIndex === -1) {
+            alert('No se pudo identificar la fila de cabeceras del archivo fuente para DistribuciÃ³n.');
+            return;
         }
+
+        const headerMap = this.buildHeaderMap(sourceWs, sourceRange, headerRowIndex);
+        const statusSeasonCol = headerMap.get('status season');
+        if (statusSeasonCol === undefined) {
+            alert('No se pudo localizar la columna STATUS Season en el archivo fuente para DistribuciÃ³n.');
+            return;
+        }
+
+        const outputStartRow = 4; // Conserva el arranque actual del export.
 
         const exportStamp = (() => {
             const now = new Date();
@@ -1691,8 +1738,7 @@ class GridController {
 
             let targetRow = 0;
 
-            // Iniciar la salida en la fila 6 del global: esa fila pasa a ser la primera visible del export.
-            for (let sourceRow = headerRowIndex; sourceRow <= sourceRange.e.r; sourceRow += 1) {
+            for (let sourceRow = outputStartRow; sourceRow <= sourceRange.e.r; sourceRow += 1) {
                 const statusCell = sourceWs[XLSX.utils.encode_cell({ r: sourceRow, c: statusSeasonCol })];
                 if (sourceRow > headerRowIndex && !statusFilter.includes(normalizeText(statusCell ? statusCell.v : ''))) {
                     continue;
@@ -1766,16 +1812,10 @@ class GridController {
         }
 
         const sourceRange = XLSX.utils.decode_range(sourceWs['!ref']);
-        const headerRowIndex = 4; // Row 5 of Excel
-        const headerMap = new Map();
+        const headerRowIndex = this.findGlobalHeaderRow(sourceWs);
+        if (headerRowIndex === -1) return [];
 
-        for (let c = sourceRange.s.c; c <= sourceRange.e.c; c += 1) {
-            const headerCell = sourceWs[XLSX.utils.encode_cell({ r: headerRowIndex, c })];
-            const normalizedHeader = this.normalizeText(headerCell ? headerCell.v : '');
-            if (normalizedHeader) {
-                headerMap.set(normalizedHeader, c);
-            }
-        }
+        const headerMap = this.buildHeaderMap(sourceWs, sourceRange, headerRowIndex);
 
         const findColumnIndex = (...aliases) => {
             for (const alias of aliases) {
@@ -2132,16 +2172,13 @@ class GridController {
         }
 
         const sourceRange = XLSX.utils.decode_range(sourceWs['!ref']);
-        const headerRowIndex = 4; // Row 5 of Excel
-        const headerMap = new Map();
-
-        for (let c = sourceRange.s.c; c <= sourceRange.e.c; c += 1) {
-            const headerCell = sourceWs[XLSX.utils.encode_cell({ r: headerRowIndex, c })];
-            const normalizedHeader = this.normalizeText(headerCell ? headerCell.v : '');
-            if (normalizedHeader) {
-                headerMap.set(normalizedHeader, c);
-            }
+        const headerRowIndex = this.findGlobalHeaderRow(sourceWs);
+        if (headerRowIndex === -1) {
+            alert('No se pudo identificar la fila de cabeceras del archivo fuente para Status.');
+            return;
         }
+
+        const headerMap = this.buildHeaderMap(sourceWs, sourceRange, headerRowIndex);
 
         const findColumnIndex = (...aliases) => {
             for (const alias of aliases) {
@@ -2171,6 +2208,14 @@ class GridController {
             if (!cell || cell.v === undefined || cell.v === null) return '';
             return cell.v;
         };
+
+        const getHodCellValue = (sourceRow) => getSourceCellValue(
+            sourceRow,
+            'Orig PO Handover',
+            'HOD COFACO',
+            'HOD LLL',
+            'HOD'
+        );
 
         const getDateSerial = (sourceRow, ...aliases) => statusDateToExcelSerial(getSourceCellValue(sourceRow, ...aliases));
 
@@ -2896,14 +2941,13 @@ class GridController {
         }
 
         const sourceRange = XLSX.utils.decode_range(sourceWs['!ref']);
-        const headerRowIndex = 4;
-        const headerMap = new Map();
-
-        for (let c = sourceRange.s.c; c <= sourceRange.e.c; c += 1) {
-            const headerCell = sourceWs[XLSX.utils.encode_cell({ r: headerRowIndex, c })];
-            const norm = this.normalizeText(headerCell ? headerCell.v : '');
-            if (norm) headerMap.set(norm, c);
+        const headerRowIndex = this.findGlobalHeaderRow(sourceWs);
+        if (headerRowIndex === -1) {
+            alert('No se pudo identificar la fila de cabeceras del archivo fuente para Seguimiento.');
+            return;
         }
+
+        const headerMap = this.buildHeaderMap(sourceWs, sourceRange, headerRowIndex);
 
         const findColumnIndex = (...aliases) => {
             for (const alias of aliases) {
